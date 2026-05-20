@@ -29,12 +29,14 @@ function love.load()
     ui    = love.graphics.newFont(16),
     ui_lg = love.graphics.newFont(28),
     ui_xl = love.graphics.newFont(64),
-    emoji = love.graphics.newFont("assets/fonts/NotoEmoji-Regular.ttf", 32),
   }
 
   resource = {
     getFont = function(_, name) return _G._fonts[name] end,
   }
+
+  local UI = require("ui")
+  UI.preloadEmoji()
 
   local Sounds = require("sounds")
   Sounds.init()
