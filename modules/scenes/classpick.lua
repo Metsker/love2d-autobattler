@@ -21,7 +21,7 @@ local function startWith(name)
   if not S.unlocks.classes[name] then return end
   S.newRun(name)
   local Combat = require("combat")
-  Combat.spawnFloor(1)
+  Combat.spawnRoom(1)
   local Game = require("game")
   Game.switch("run")
 end

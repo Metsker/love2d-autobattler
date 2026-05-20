@@ -10,13 +10,27 @@ local Run = {}
 local enemyHitboxes = {}
 local bagHitboxes   = {}
 local equipHitboxes = {}
+local benchHitboxes = {} -- entries: { x,y,w,h, kind = "input"|"result", slot = 1|2 (for input) }
 local arenaRect     = { x = 0, y = 0, w = 0, h = 0 }
 local muteRect      = { x = 0, y = 0, w = 0, h = 0 }
 
 local mouseX, mouseY = -1, -1
 
+-- Active drag. nil when idle. Fields:
+--   item, source = { kind = "bag"|"bench"|"result", idx?, slot? },
+--   offsetX, offsetY  (cursor-to-item-corner offset captured at pickup)
+local drag = nil
+
+-- Brief reject-flash overlay. nil when idle.
+local rejectFlash = nil -- { x, y, w, h, age, life }
+
 local function speedMul()
   return C.SPEED_LEVELS[S.speed + 1] or 1
+end
+
+local function displayVal(stat, v)
+  if C.STAT_DISPLAY_EXCLUDE[stat] then return v end
+  return v * C.STAT_DISPLAY_MULT
 end
 
 local function statAccum(run)
@@ -25,6 +39,7 @@ local function statAccum(run)
   local s = {
     hpMax = cls.hpMax, atk = cls.atk, armor = cls.armor, atkSpd = cls.atkSpd,
     crit = cls.crit, critDmg = cls.critDmg, dodge = cls.dodge,
+    cleave = 0, lifesteal = 0, regen = 0, thorns = 0,
   }
   for _, item in pairs(run.equip) do
     if item then
@@ -87,17 +102,21 @@ function Run.update(dt)
   if S.shake and S.shake > 0 then
     S.shake = math.max(0, S.shake - dt * 1.5)
   end
+  if rejectFlash then
+    rejectFlash.age = rejectFlash.age + dt
+    if rejectFlash.age >= rejectFlash.life then rejectFlash = nil end
+  end
 
-  if S.run.floorState == "dead" then
+  if S.run.roomState == "dead" then
     Sounds.play("gameover")
     local Game = require("game")
-    Game.switch("gameover", { result = "dead", floor = S.run.floor })
-  elseif S.run.floorState == "won" then
+    Game.switch("gameover", { result = "dead", room = S.run.room })
+  elseif S.run.roomState == "won" then
     if S.unlocks.classes.rogue == false then S.unlocks.classes.rogue = true end
     if S.unlocks.classes.monk == false then S.unlocks.classes.monk = true end
     S.unlocks.bossKills = (S.unlocks.bossKills or 0) + 1
     local Game = require("game")
-    Game.switch("gameover", { result = "won", floor = S.run.floor })
+    Game.switch("gameover", { result = "won", room = S.run.room })
   end
 end
 
@@ -112,7 +131,8 @@ local function drawHpBar(x, y, w, h, hp, hpMax, color)
   love.graphics.setColor(1, 1, 1, 1)
   local font = resource:getFont("ui")
   love.graphics.setFont(font)
-  love.graphics.printf(("%d / %d"):format(hp, hpMax), x, y + (h - font:getHeight()) / 2, w, "center")
+  local m = C.STAT_DISPLAY_MULT
+  love.graphics.printf(("%d / %d"):format(hp * m, hpMax * m), x, y + (h - font:getHeight()) / 2, w, "center")
 end
 
 local function drawHero(run, halfW)
@@ -140,18 +160,19 @@ local function drawHero(run, halfW)
   love.graphics.rectangle("fill", x + 130, y + 80, barW * cdFrac, 10)
 
   local stats = {
-    ("ATK %d"):format(h_.atk),
-    ("ARM %d"):format(h_.armor),
-    ("SPD %.2f"):format(h_.atkSpd),
-    ("CRT %d%%"):format(math.floor(h_.crit * 100)),
-    ("CDM +%d%%"):format(math.floor((h_.critDmg - 1) * 100)),
-    ("DDG %d%%"):format(math.floor(h_.dodge * 100)),
+    ("ATK %d"):format(displayVal("atk", h_.atk)),
+    ("ARM %d"):format(displayVal("armor", h_.armor)),
+    ("SPD %.2f"):format(displayVal("atkSpd", h_.atkSpd)),
+    ("CRT %d%%"):format(math.floor(displayVal("crit", h_.crit) * 100)),
+    ("CDM +%d%%"):format(math.floor(displayVal("critDmg", h_.critDmg - 1) * 100)),
+    ("DDG %d%%"):format(math.floor(displayVal("dodge", h_.dodge) * 100)),
   }
   local font2 = resource:getFont("ui")
   love.graphics.setFont(font2)
-  local statsX = x + math.min(420, w - 240)
+  local statsX = x + math.min(420, w - 280)
+  local colGap = 120
   for i, s in ipairs(stats) do
-    love.graphics.print(s, statsX + ((i - 1) % 3) * 80, y + 50 + math.floor((i - 1) / 3) * 28)
+    love.graphics.print(s, statsX + ((i - 1) % 3) * colGap, y + 50 + math.floor((i - 1) / 3) * 28)
   end
 
   if h_.hitFlash and h_.hitFlash > 0 then
@@ -176,7 +197,7 @@ local function drawEquip(run, halfW, yStart)
   local font = resource:getFont("ui")
   love.graphics.setFont(font)
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.print("EQUIPPED  (dbl-LMB on bag = equip)", x0, y0 - 22)
+  love.graphics.print("EQUIPPED  (drag bag item onto slot)", x0, y0 - 22)
   for i, slot in ipairs(C.SLOT_ORDER) do
     local x = x0 + (i - 1) * (cell + gap)
     local y = y0
@@ -205,6 +226,14 @@ local function bagCellSize(halfW)
   return math.max(50, math.min(80, math.floor(available / C.BAG_COLS))), gap
 end
 
+local function drawItemInCell(item, x, y, cell, emojiScale)
+  local rc = C.RARITY[item.rarity].color
+  love.graphics.setColor(rc[1], rc[2], rc[3], 1)
+  love.graphics.rectangle("line", x, y, cell, cell, 4, 4)
+  UI.drawEmoji(item.emoji or "?", x + cell / 2, y + cell / 2,
+               math.floor(cell * (emojiScale or 0.55)), rc)
+end
+
 local function drawBag(run, halfW, yStart)
   bagHitboxes = {}
   local cell, gap = bagCellSize(halfW)
@@ -214,7 +243,7 @@ local function drawBag(run, halfW, yStart)
   local font = resource:getFont("ui")
   love.graphics.setFont(font)
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.print("BAG  (RMB = lock,  dbl-LMB = equip)", x0, y0 - 22)
+  love.graphics.print("BAG  (drag to equip / merge,  RMB = lock)", x0, y0 - 22)
   for r = 1, C.BAG_ROWS do
     for c = 1, C.BAG_COLS do
       local idx = (r - 1) * C.BAG_COLS + c
@@ -241,6 +270,54 @@ local function drawBag(run, halfW, yStart)
       bagHitboxes[#bagHitboxes + 1] = { x = x, y = y, w = cell, h = cell, idx = idx, item = item, fromBag = true }
     end
   end
+  return y0 + C.BAG_ROWS * cell + (C.BAG_ROWS - 1) * gap
+end
+
+local function drawBench(run, halfW, yStart)
+  benchHitboxes = {}
+  local bench = run.bench
+  local cell = 78
+  local gap = 24
+  local rowW = cell * 3 + gap * 2
+  local x0 = (halfW - rowW) / 2
+  local y0 = yStart + 30
+  local font = resource:getFont("ui")
+  love.graphics.setFont(font)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.print("MERGE  (drag two same-slot + same-rarity items here)", x0, y0 - 22)
+
+  local positions = { 1, 2, 3 } -- input1, result, input2
+  local labels = { "1", "=", "2" }
+  for i, _ in ipairs(positions) do
+    local x = x0 + (i - 1) * (cell + gap)
+    local y = y0
+    local kind = (i == 2) and "result" or "input"
+    local slot = (i == 1) and 1 or (i == 3) and 2 or nil
+
+    -- arrow between inputs and result
+    if i == 2 then
+      love.graphics.setColor(0.20, 0.22, 0.28, 1)
+    else
+      love.graphics.setColor(0.12, 0.13, 0.16, 1)
+    end
+    love.graphics.rectangle("fill", x, y, cell, cell, 4, 4)
+
+    local item = nil
+    if kind == "input" then item = bench.input[slot] end
+    if kind == "result" then item = bench.result end
+
+    if item then
+      drawItemInCell(item, x, y, cell, 0.6)
+    else
+      love.graphics.setColor(0.28, 0.30, 0.34, 1)
+      love.graphics.rectangle("line", x, y, cell, cell, 4, 4)
+      love.graphics.setColor(0.45, 0.45, 0.50, 1)
+      love.graphics.printf(labels[i], x, y + (cell - font:getHeight()) / 2, cell, "center")
+    end
+
+    benchHitboxes[#benchHitboxes + 1] = { x = x, y = y, w = cell, h = cell, kind = kind, slot = slot, item = item }
+  end
+  return y0 + cell
 end
 
 local function drawEnemies(run, splitX, W, H)
@@ -341,7 +418,7 @@ local function drawTopBar(run, splitX, W)
   local font = resource:getFont("ui_lg")
   love.graphics.setFont(font)
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.printf(("Floor %d / %d"):format(run.floor, C.MAX_FLOOR), splitX, 30, rightW, "center")
+  love.graphics.printf(("Room %d / %d"):format(run.room, C.MAX_ROOM), splitX, 30, rightW, "center")
 
   local font2 = resource:getFont("ui")
   love.graphics.setFont(font2)
@@ -354,7 +431,7 @@ local function drawTopBar(run, splitX, W)
 end
 
 local function drawClearedHint(run, splitX, W)
-  if run.floorState ~= "cleared" then return end
+  if run.roomState ~= "cleared" then return end
   local rightW = W - splitX
   local x = splitX + 60
   local y = 160
@@ -365,43 +442,49 @@ local function drawClearedHint(run, splitX, W)
   love.graphics.rectangle("line", x, y, w, 60, 6, 6)
   love.graphics.setFont(resource:getFont("ui_lg"))
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.printf("FLOOR CLEARED — click arena for next", x, y + 14, w, "center")
+  love.graphics.printf("ROOM CLEARED — click arena for next", x, y + 14, w, "center")
 end
 
 local STAT_LABEL = {
-  hpMax   = "Max HP",
-  atk     = "ATK",
-  armor   = "Armor",
-  atkSpd  = "Atk Speed",
-  crit    = "Crit",
-  critDmg = "Crit Dmg",
-  dodge   = "Dodge",
+  hpMax     = "Max HP",
+  atk       = "ATK",
+  armor     = "Armor",
+  atkSpd    = "Atk Speed",
+  crit      = "Crit",
+  critDmg   = "Crit Dmg",
+  dodge     = "Dodge",
+  cleave    = "Cleave",
+  lifesteal = "Lifesteal",
+  regen     = "Regen",
+  thorns    = "Thorns",
 }
 
 local STAT_ORDER = { "atk", "hpMax", "armor", "atkSpd", "crit", "critDmg", "dodge" }
 
-local PCT_STATS = { crit = true, critDmg = true, dodge = true }
+local PCT_STATS = { crit = true, critDmg = true, dodge = true, cleave = true, lifesteal = true, thorns = true }
 
 local function fmtStat(stat, val, isPct)
   if val == 0 then return nil end
+  local dv = displayVal(stat, val)
   if stat == "atkSpd" then
-    return ("%+0.2f %s"):format(val, STAT_LABEL[stat])
+    return ("%+0.2f %s"):format(dv, STAT_LABEL[stat])
   elseif isPct or PCT_STATS[stat] then
-    return ("%+d%% %s"):format(math.floor(val * 100 + 0.5), STAT_LABEL[stat])
+    return ("%+d%% %s"):format(math.floor(dv * 100 + 0.5), STAT_LABEL[stat])
   else
-    return ("%+d %s"):format(val, STAT_LABEL[stat])
+    return ("%+d %s"):format(dv, STAT_LABEL[stat])
   end
 end
 
 local function fmtDelta(stat, delta)
   if delta == 0 then return nil end
+  local dv = displayVal(stat, delta)
   local body
   if stat == "atkSpd" then
-    body = ("%+0.2f %s"):format(delta, STAT_LABEL[stat])
+    body = ("%+0.2f %s"):format(dv, STAT_LABEL[stat])
   elseif PCT_STATS[stat] then
-    body = ("%+d%% %s"):format(math.floor(delta * 100 + 0.5), STAT_LABEL[stat])
+    body = ("%+d%% %s"):format(math.floor(dv * 100 + 0.5), STAT_LABEL[stat])
   else
-    body = ("%+d %s"):format(delta, STAT_LABEL[stat])
+    body = ("%+d %s"):format(dv, STAT_LABEL[stat])
   end
   local color = delta > 0 and {0.4, 0.9, 0.4, 1} or {0.95, 0.4, 0.4, 1}
   return body, color
@@ -418,13 +501,52 @@ local function tooltipLines(item)
     local s = fmtStat(stat, v, false)
     if s then lines[#lines + 1] = { text = s, color = {0.85, 0.85, 0.85, 1} } end
   end
-  if #item.affixes > 0 then
+  local affixGroups = Loot.groupedAffixes(item)
+  if #affixGroups > 0 then
     lines[#lines + 1] = { text = "—", color = {0.5, 0.5, 0.5, 1} }
-    for _, a in ipairs(item.affixes) do
-      local s = fmtStat(a.stat, a.value, a.pct)
-      if s then lines[#lines + 1] = { text = s, color = {0.55, 0.85, 0.95, 1} } end
+    for _, g in ipairs(affixGroups) do
+      local s = fmtStat(g.stat, g.total, g.pct)
+      if s then
+        if g.count and g.count > 1 then
+          s = s .. (" (\u{00D7}%d)"):format(g.count)
+        end
+        local line = { text = s, color = {0.85, 0.85, 0.85, 1} }
+        if g.tier then
+          local tc = C.TIER_COLOR[g.tier] or {1, 1, 1, 1}
+          line.prefix = g.overflow
+            and ("T%d\u{2605} "):format(g.tier)
+            or  ("T%d "):format(g.tier)
+          line.prefixColor = tc
+        end
+        lines[#lines + 1] = line
+      end
     end
   end
+  local u = item.unique
+  if u then
+    lines[#lines + 1] = { text = "—", color = {0.5, 0.5, 0.5, 1} }
+    local s = fmtStat(u.stat, u.value, u.pct)
+    if s then
+      local line = { text = s, color = C.UNIQUE_COLOR }
+      if u.tier then
+        line.prefix = ("T%d "):format(u.tier)
+        line.prefixColor = C.UNIQUE_COLOR
+      end
+      lines[#lines + 1] = line
+    end
+  end
+  return lines
+end
+
+local function resultTooltipLines(item)
+  local lines = {}
+  for _, stat in ipairs(STAT_ORDER) do
+    local v = (item.base[stat] or 0)
+    local s = fmtStat(stat, v, false)
+    if s then lines[#lines + 1] = { text = s, color = {0.85, 0.85, 0.85, 1} } end
+  end
+  lines[#lines + 1] = { text = "—", color = {0.5, 0.5, 0.5, 1} }
+  lines[#lines + 1] = { text = "???", color = {0.85, 0.85, 0.95, 1} }
   return lines
 end
 
@@ -440,26 +562,31 @@ local function comparisonLines(item, run)
   return lines, true
 end
 
-local function drawTooltip(item, fromBag, W, H)
+local function drawTooltip(item, fromBag, W, H, isResult)
   if not item then return end
   local font = resource:getFont("ui")
   love.graphics.setFont(font)
   local rarity = C.RARITY[item.rarity]
   local title = ("%s %s"):format(rarity.name, item.name)
   local slotLine = "Slot: " .. (C.SLOT_LABEL[item.slot] or item.slot)
-  local lines = tooltipLines(item)
+  local lines = isResult and resultTooltipLines(item) or tooltipLines(item)
 
   local compLines, hasComp = nil, false
-  if fromBag then
+  if fromBag and not isResult then
     compLines, hasComp = comparisonLines(item, S.run)
   end
 
   local pad = 10
   local lineH = font:getHeight() + 2
   local sepBefore = (hasComp and compLines and #compLines > 0)
+  local function lineWidth(l)
+    local w = font:getWidth(l.text)
+    if l.prefix then w = w + font:getWidth(l.prefix) end
+    return w
+  end
   local width = math.max(font:getWidth(title), font:getWidth(slotLine))
   for _, l in ipairs(lines) do
-    width = math.max(width, font:getWidth(l.text))
+    width = math.max(width, lineWidth(l))
   end
   local compHeader = "vs equipped:"
   if sepBefore then
@@ -489,8 +616,15 @@ local function drawTooltip(item, fromBag, W, H)
   love.graphics.setColor(0.7, 0.7, 0.7, 1)
   love.graphics.print(slotLine, tx + pad, ty + pad + lineH)
   for i, l in ipairs(lines) do
+    local lx = tx + pad
+    local ly = ty + pad + lineH * (i + 1)
+    if l.prefix then
+      love.graphics.setColor(l.prefixColor or l.color)
+      love.graphics.print(l.prefix, lx, ly)
+      lx = lx + font:getWidth(l.prefix)
+    end
     love.graphics.setColor(l.color)
-    love.graphics.print(l.text, tx + pad, ty + pad + lineH * (i + 1))
+    love.graphics.print(l.text, lx, ly)
   end
   if sepBefore then
     local offset = pad + lineH * (#lines + 2)
@@ -508,16 +642,22 @@ local function hoveredItem()
   for _, hb in ipairs(equipHitboxes) do
     if hb.item and mouseX >= hb.x and mouseX <= hb.x + hb.w
        and mouseY >= hb.y and mouseY <= hb.y + hb.h then
-      return hb.item, false
+      return hb.item, false, false, hb
     end
   end
   for _, hb in ipairs(bagHitboxes) do
     if hb.item and mouseX >= hb.x and mouseX <= hb.x + hb.w
        and mouseY >= hb.y and mouseY <= hb.y + hb.h then
-      return hb.item, true
+      return hb.item, true, false, hb
     end
   end
-  return nil, false
+  for _, hb in ipairs(benchHitboxes) do
+    if hb.item and mouseX >= hb.x and mouseX <= hb.x + hb.w
+       and mouseY >= hb.y and mouseY <= hb.y + hb.h then
+      return hb.item, false, hb.kind == "result", hb
+    end
+  end
+  return nil, false, false, nil
 end
 
 function Run.draw()
@@ -549,7 +689,8 @@ function Run.draw()
 
   drawHero(run, halfW)
   local equipBottom = drawEquip(run, halfW, 150)
-  drawBag(run, halfW, equipBottom + 6)
+  local bagBottom = drawBag(run, halfW, equipBottom + 6)
+  drawBench(run, halfW, bagBottom + 6)
 
   drawTopBar(run, splitX, W)
   drawEnemies(run, splitX, W, H)
@@ -558,26 +699,102 @@ function Run.draw()
 
   if sk > 0 then love.graphics.pop() end
 
-  local item, fromBag = hoveredItem()
-  if item then drawTooltip(item, fromBag, W, H) end
+  -- Highlight valid drop targets while dragging.
+  if drag then
+    local item = drag.item
+    local src  = drag.source
+    local function outline(hb, color)
+      love.graphics.setColor(color[1], color[2], color[3], 0.85)
+      love.graphics.setLineWidth(3)
+      love.graphics.rectangle("line", hb.x - 1, hb.y - 1, hb.w + 2, hb.h + 2, 4, 4)
+      love.graphics.setLineWidth(1)
+    end
+    for _, hb in ipairs(equipHitboxes) do
+      if hb.slot == item.slot then outline(hb, {0.35, 0.95, 0.45, 1}) end
+    end
+    if src.kind == "bag" then
+      for _, hb in ipairs(benchHitboxes) do
+        if hb.kind == "input" and not hb.item then
+          outline(hb, {0.95, 0.85, 0.30, 1})
+        end
+      end
+    end
+    if src.kind ~= "bag" then
+      for _, hb in ipairs(bagHitboxes) do
+        if not hb.item then outline(hb, {0.50, 0.75, 0.95, 1}) end
+      end
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  if rejectFlash then
+    local a = math.max(0, 1 - rejectFlash.age / rejectFlash.life)
+    love.graphics.setColor(0.95, 0.30, 0.30, a * 0.7)
+    love.graphics.rectangle("fill", rejectFlash.x, rejectFlash.y, rejectFlash.w, rejectFlash.h, 4, 4)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  if drag then
+    local item = drag.item
+    local cell = drag.originRect.w
+    local gx = mouseX - drag.offsetX
+    local gy = mouseY - drag.offsetY
+    love.graphics.setColor(0.08, 0.09, 0.12, 0.75)
+    love.graphics.rectangle("fill", gx, gy, cell, cell, 4, 4)
+    drawItemInCell(item, gx, gy, cell, 0.6)
+  else
+    local item, fromBag, isResult, hoverHb = hoveredItem()
+    if item then
+      for _, hb in ipairs(bagHitboxes) do
+        if hb.item and hb.item ~= item and Loot.canMerge(item, hb.item) then
+          love.graphics.setColor(0.85, 0.50, 1.0, 0.9)
+          love.graphics.setLineWidth(3)
+          love.graphics.rectangle("line", hb.x - 1, hb.y - 1, hb.w + 2, hb.h + 2, 4, 4)
+          love.graphics.setLineWidth(1)
+        end
+      end
+      if hoverHb then
+        love.graphics.setColor(0.85, 0.50, 1.0, 0.9)
+        love.graphics.setLineWidth(3)
+        love.graphics.rectangle("line", hoverHb.x - 1, hoverHb.y - 1, hoverHb.w + 2, hoverHb.h + 2, 4, 4)
+        love.graphics.setLineWidth(1)
+      end
+      love.graphics.setColor(1, 1, 1, 1)
+      drawTooltip(item, fromBag, W, H, isResult)
+    end
+  end
 end
 
-local lastClick = { idx = nil, t = -10 }
+local function inRect(rx, ry, rw, rh, px, py)
+  return px >= rx and px <= rx + rw and py >= ry and py <= ry + rh
+end
 
-local function autoEquipFromBag(idx)
-  local run = S.run
-  if not run then return end
-  local item = run.bag[idx]
-  if not item then return end
-  local slot = item.slot
-  local prev = run.equip[slot]
-  run.equip[slot] = item
-  run.bag[idx] = nil
-  if prev then
-    S.pushLog(("discarded %s"):format(Loot.label(prev)))
+local function findHit(list, x, y)
+  for _, hb in ipairs(list) do
+    if inRect(hb.x, hb.y, hb.w, hb.h, x, y) then return hb end
   end
-  S.pushLog(("equipped %s"):format(Loot.label(item)))
-  Sounds.play("equip")
+  return nil
+end
+
+local function startRejectFlash(rect)
+  rejectFlash = { x = rect.x, y = rect.y, w = rect.w, h = rect.h, age = 0, life = 0.35 }
+end
+
+local function snapBackToSource()
+  if not drag then return end
+  if drag.source.kind == "bag" then
+    S.run.bag[drag.source.idx] = drag.item
+  elseif drag.source.kind == "bench" then
+    S.benchSet(drag.source.slot, drag.item)
+  end
+  -- result source: item still in bench.result; nothing to restore
+  if drag.originRect then startRejectFlash(drag.originRect) end
+  Sounds.play("click")
+end
+
+local function destroyPrevEquip(prev)
+  if not prev then return end
+  S.pushLog(("destroyed %s"):format(Loot.label(prev)))
 end
 
 function Run.mousemoved(x, y)
@@ -586,16 +803,13 @@ end
 
 function Run.mousepressed(x, y, b)
   if b == 1 then
-    if x >= muteRect.x and x <= muteRect.x + muteRect.w
-       and y >= muteRect.y and y <= muteRect.y + muteRect.h then
+    if inRect(muteRect.x, muteRect.y, muteRect.w, muteRect.h, x, y) then
       Sounds.toggleMute()
       if not Sounds.isMuted() then Sounds.play("click") end
       return
     end
     for _, hb in ipairs(enemyHitboxes) do
-      if hb.unit and hb.unit.hp > 0
-         and x >= hb.x and x <= hb.x + hb.w
-         and y >= hb.y and y <= hb.y + hb.h then
+      if hb.unit and hb.unit.hp > 0 and inRect(hb.x, hb.y, hb.w, hb.h, x, y) then
         S.run.hero.target = hb.unit
         S.run.hero.targetLocked = true
         S.pushLog(("targeting %s"):format(hb.unit.name))
@@ -603,34 +817,146 @@ function Run.mousepressed(x, y, b)
         return
       end
     end
-    for _, hb in ipairs(bagHitboxes) do
-      if x >= hb.x and x <= hb.x + hb.w and y >= hb.y and y <= hb.y + hb.h then
-        local now = love.timer.getTime()
-        if lastClick.idx == hb.idx and (now - lastClick.t) < 0.35 then
-          autoEquipFromBag(hb.idx)
-          lastClick.t = -10
-        else
-          lastClick.idx = hb.idx
-          lastClick.t = now
-        end
+
+    local benchHit = findHit(benchHitboxes, x, y)
+    if benchHit then
+      if benchHit.kind == "result" and benchHit.item then
+        drag = {
+          item = benchHit.item,
+          source = { kind = "result" },
+          offsetX = x - benchHit.x, offsetY = y - benchHit.y,
+          originRect = benchHit,
+        }
+        return
+      elseif benchHit.kind == "input" and benchHit.item then
+        drag = {
+          item = benchHit.item,
+          source = { kind = "bench", slot = benchHit.slot },
+          offsetX = x - benchHit.x, offsetY = y - benchHit.y,
+          originRect = benchHit,
+        }
+        S.benchTake(benchHit.slot)
         return
       end
     end
-    if S.run.floorState == "cleared"
-       and x >= arenaRect.x and x <= arenaRect.x + arenaRect.w
-       and y >= arenaRect.y and y <= arenaRect.y + arenaRect.h then
-      Combat.advanceFloor()
+
+    local bagHit = findHit(bagHitboxes, x, y)
+    if bagHit and bagHit.item then
+      drag = {
+        item = bagHit.item,
+        source = { kind = "bag", idx = bagHit.idx },
+        offsetX = x - bagHit.x, offsetY = y - bagHit.y,
+        originRect = bagHit,
+      }
+      S.run.bag[bagHit.idx] = nil
+      return
+    end
+
+    if S.run.roomState == "cleared"
+       and inRect(arenaRect.x, arenaRect.y, arenaRect.w, arenaRect.h, x, y) then
+      Combat.advanceRoom()
       return
     end
   elseif b == 2 then
     for _, hb in ipairs(bagHitboxes) do
-      if x >= hb.x and x <= hb.x + hb.w and y >= hb.y and y <= hb.y + hb.h then
+      if inRect(hb.x, hb.y, hb.w, hb.h, x, y) then
         S.toggleLock(hb.idx)
         Sounds.play("lock")
         return
       end
     end
   end
+end
+
+local function mousereleasedImpl(x, y, b)
+  if b ~= 1 or not drag then return end
+  local item = drag.item
+  local src  = drag.source
+
+  local equipHit = findHit(equipHitboxes, x, y)
+  local bagHit   = findHit(bagHitboxes, x, y)
+  local benchHit = findHit(benchHitboxes, x, y)
+
+  -- Cancel: drop on origin slot puts item back, no flash.
+  if src.kind == "bag" and bagHit and bagHit.idx == src.idx then
+    S.run.bag[src.idx] = item
+    drag = nil
+    return
+  end
+  if src.kind == "bench" and benchHit and benchHit.kind == "input" and benchHit.slot == src.slot then
+    S.benchSet(src.slot, item)
+    drag = nil
+    return
+  end
+
+  -- Equip target (slot must match item.slot)
+  if equipHit and equipHit.slot == item.slot then
+    if src.kind == "bag" then
+      local prev = S.run.equip[item.slot]
+      S.run.equip[item.slot] = item
+      destroyPrevEquip(prev)
+      S.pushLog(("equipped %s"):format(Loot.label(item)))
+      Sounds.play("equip")
+      drag = nil
+      return
+    elseif src.kind == "bench" then
+      local prev = S.run.equip[item.slot]
+      S.run.equip[item.slot] = item
+      destroyPrevEquip(prev)
+      S.pushLog(("equipped %s"):format(Loot.label(item)))
+      Sounds.play("equip")
+      drag = nil
+      return
+    elseif src.kind == "result" then
+      local result = S.benchCommit()
+      if not result then snapBackToSource(); drag = nil; return end
+      local prev = S.run.equip[result.slot]
+      S.run.equip[result.slot] = result
+      destroyPrevEquip(prev)
+      S.pushLog(("merged + equipped %s"):format(Loot.label(result)))
+      Sounds.play("equip")
+      drag = nil
+      return
+    end
+  end
+
+  -- Bench input target (only bag source allowed; must be empty + compatible)
+  if benchHit and benchHit.kind == "input" and src.kind == "bag" then
+    if benchHit.item then snapBackToSource(); drag = nil; return end
+    if S.benchSet(benchHit.slot, item) then
+      S.pushLog(("bench %d: %s"):format(benchHit.slot, Loot.label(item)))
+      Sounds.play("click")
+      drag = nil
+      return
+    end
+    snapBackToSource(); drag = nil; return
+  end
+
+  -- Bag empty target. Bag-source forbidden (no bag-rearrange).
+  if bagHit and not bagHit.item then
+    if src.kind == "bench" then
+      S.run.bag[bagHit.idx] = item
+      drag = nil
+      return
+    elseif src.kind == "result" then
+      local result = S.benchCommit()
+      if not result then snapBackToSource(); drag = nil; return end
+      S.run.bag[bagHit.idx] = result
+      S.pushLog(("merged: %s"):format(Loot.label(result)))
+      Sounds.play("loot")
+      drag = nil
+      return
+    end
+    -- bag → bag rearrange is not allowed; fall through to snap-back.
+  end
+
+  snapBackToSource()
+  drag = nil
+end
+
+function Run.mousereleased(x, y, b)
+  mousereleasedImpl(x, y, b)
+  S.bagCompact()
 end
 
 function Run.keypressed(k)

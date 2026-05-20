@@ -4,11 +4,11 @@ local UI = require("ui")
 local Gameover = {}
 
 local result
-local floor
+local room
 
 function Gameover.enter(args)
   result = (args and args.result) or "dead"
-  floor  = (args and args.floor)  or 1
+  room   = (args and args.room)   or 1
 end
 
 function Gameover.draw()
@@ -29,7 +29,7 @@ function Gameover.draw()
   end
   love.graphics.setFont(resource:getFont("ui_lg"))
   love.graphics.setColor(0.85, 0.85, 0.85, 1)
-  love.graphics.printf(("reached floor %d"):format(floor), 0, H * 0.62, W, "center")
+  love.graphics.printf(("reached room %d"):format(room), 0, H * 0.62, W, "center")
   love.graphics.setFont(resource:getFont("ui"))
   love.graphics.setColor(0.7, 0.7, 0.7, 1)
   if result == "won" and S.unlocks.bossKills == 1 then
