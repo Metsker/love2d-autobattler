@@ -31,6 +31,12 @@ function love.load()
     ui_xl = love.graphics.newFont(64),
   }
 
+  local okV, Version = pcall(require, "version")
+  if not okV or type(Version) ~= "table" then Version = { n = 0, sha = "dev" } end
+  _G._versionLabel = (Version.n and Version.n > 0)
+    and ("v" .. tostring(Version.n))
+    or "vdev"
+
   resource = {
     getFont = function(_, name) return _G._fonts[name] end,
   }
@@ -46,7 +52,17 @@ function love.load()
 end
 
 function love.update(dt)              if Game then Game.update(dt) end end
-function love.draw()                  if Game then Game.draw() end end
+function love.draw()
+  if Game then Game.draw() end
+  if _G._versionLabel and _G._fonts and _G._fonts.ui then
+    local font = _G._fonts.ui
+    love.graphics.setFont(font)
+    local w = font:getWidth(_G._versionLabel)
+    love.graphics.setColor(1, 1, 1, 0.55)
+    love.graphics.print(_G._versionLabel, love.graphics.getWidth() - w - 6, 2)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+end
 function love.resize(w, h)            if Game then Game.resize(w, h) end end
 function love.mousemoved(x,y,dx,dy,t) if Game then Game.mousemoved(x,y,dx,dy,t) end end
 function love.mousepressed(x,y,b,t)   if Game then Game.mousepressed(x,y,b,t) end end
