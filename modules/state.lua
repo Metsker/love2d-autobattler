@@ -51,7 +51,28 @@ function S.newRun(className)
     log = {},
     roomState = "fighting",
     bench = { input = { nil, nil }, result = nil },
+    dust = 0,
   }
+end
+
+function S.addDust(amount)
+  if not S.run or amount == 0 then return 0 end
+  S.run.dust = (S.run.dust or 0) + amount
+  if S.run.dust < 0 then S.run.dust = 0 end
+  return S.run.dust
+end
+
+-- Pending dust events awaiting visual processing by the renderer.
+-- Each entry: { kind = "gain"|"spend", amount, item?, origin? }
+--   item: the item that turned into dust (for shrink-fade visual)
+--   origin: "bagRight" (overflow ejection), "bagLeft" (all-locked rejection),
+--           "equip:<slot>" (equip-swap destruction), or nil (no specific origin)
+S.pendingDustEvents = {}
+
+function S.queueDustEvent(kind, amount, item, origin)
+  table.insert(S.pendingDustEvents, {
+    kind = kind, amount = amount or 0, item = item, origin = origin,
+  })
 end
 
 function S.benchRecompute()
@@ -110,67 +131,85 @@ function S.pushLog(msg)
   while #S.run.log > 8 do table.remove(S.run.log, 1) end
 end
 
+-- Strict left-to-right FIFO conveyor.
+-- Locks are pins at their current slot. Unlocked items pack into the remaining
+-- slots in insertion order, newest-first (left), oldest-last (right).
 function S.bagReorder()
   if not S.run then return end
   local bag, locks = S.run.bag, S.run.locks
-  local lockedItems, unlockedItems = {}, {}
+  local lockedAt = {}
+  local unlockedItems = {}
   for i = 1, C.BAG_SIZE do
     if bag[i] then
       if locks[i] then
-        lockedItems[#lockedItems + 1] = bag[i]
+        lockedAt[i] = bag[i]
       else
         unlockedItems[#unlockedItems + 1] = bag[i]
       end
     end
   end
-  table.sort(lockedItems, function(a, b)
-    local ar, br = a.rarity or 0, b.rarity or 0
-    if ar ~= br then return ar > br end
-    return (a.uid or 0) < (b.uid or 0)
-  end)
+  -- Newest first (left), oldest last (right). Rightmost = next to die.
   table.sort(unlockedItems, function(a, b)
-    return (a.uid or 0) < (b.uid or 0)
+    return (a.uid or 0) > (b.uid or 0)
   end)
   for i = 1, C.BAG_SIZE do
     bag[i] = nil
     locks[i] = nil
   end
-  local k = 0
-  for _, item in ipairs(lockedItems) do
-    k = k + 1
-    bag[k] = item
-    locks[k] = true
-  end
+  local cursor = 1
   for _, item in ipairs(unlockedItems) do
-    k = k + 1
-    bag[k] = item
+    while lockedAt[cursor] do
+      bag[cursor] = lockedAt[cursor]
+      locks[cursor] = true
+      cursor = cursor + 1
+    end
+    if cursor > C.BAG_SIZE then break end
+    bag[cursor] = item
+    cursor = cursor + 1
+  end
+  -- Pinned locks past the last unlocked item still need to land in place.
+  for i = cursor, C.BAG_SIZE do
+    if lockedAt[i] then
+      bag[i] = lockedAt[i]
+      locks[i] = true
+    end
   end
 end
 
-function S.bagInsertHead(item)
-  if not S.run then return false end
+-- Insert at the left end of the conveyor.
+-- Returns: ok (bool), ejected (item|nil). When the bag is full an unlocked
+-- rightmost item is ejected. When fully locked the incoming item is rejected
+-- as ejected (so the caller can grant dust for it).
+function S.bagInsertLeft(item)
+  if not S.run then return false, nil end
   local bag, locks = S.run.bag, S.run.locks
+  local hasFreeUnlocked = false
   for i = 1, C.BAG_SIZE do
-    if not bag[i] and not locks[i] then
-      bag[i] = item
-      S.bagReorder()
-      return true
-    end
+    if not bag[i] and not locks[i] then hasFreeUnlocked = true; break end
   end
-  local worstIdx, worstRarity
-  for i = 1, C.BAG_SIZE do
-    if bag[i] and not locks[i] then
-      local r = bag[i].rarity or 0
-      if not worstIdx or r < worstRarity then
-        worstIdx = i
-        worstRarity = r
+  if hasFreeUnlocked then
+    -- Drop into any unlocked slot; bagReorder will sort by uid desc.
+    for i = 1, C.BAG_SIZE do
+      if not bag[i] and not locks[i] then
+        bag[i] = item
+        S.bagReorder()
+        return true, nil
       end
     end
   end
-  if not worstIdx then return false end
-  bag[worstIdx] = item
+  -- No free slot. Find the rightmost-unlocked item and eject it.
+  local ejectIdx
+  for i = C.BAG_SIZE, 1, -1 do
+    if bag[i] and not locks[i] then ejectIdx = i; break end
+  end
+  if not ejectIdx then
+    -- Everything is locked: the incoming item itself is ejected.
+    return true, item
+  end
+  local ejected = bag[ejectIdx]
+  bag[ejectIdx] = item
   S.bagReorder()
-  return true
+  return true, ejected
 end
 
 function S.bagCompact()

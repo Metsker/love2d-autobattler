@@ -99,6 +99,12 @@ function M.init()
     { freq = 784, dur = 0.40, vol = 0.4, attack = 0.005, release = 0.25, wave = "sine" },
   })
   sources.click   = src(buildTone{ freq = 600, dur = 0.03, vol = 0.3, attack = 0.001, release = 0.02, wave = "square" })
+  sources.heal    = src(mix{
+    { freq = 523, dur = 0.10, vol = 0.35, attack = 0.005, release = 0.08, wave = "sine" },
+    { freq = 784, dur = 0.18, vol = 0.30, attack = 0.06,  release = 0.10, wave = "sine" },
+  })
+  sources.dust    = src(buildTone{ freq = function(p) return 880 + 300 * p end, dur = 0.10, vol = 0.30, attack = 0.003, release = 0.07, wave = "sine" })
+  sources.reject  = src(buildTone{ freq = 140, dur = 0.10, vol = 0.4, attack = 0.005, release = 0.08, wave = "square" })
 end
 
 function M.play(name)

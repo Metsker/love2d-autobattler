@@ -4,6 +4,7 @@ local Combat = require("combat")
 local Loot   = require("loot")
 local UI     = require("ui")
 local Sounds = require("sounds")
+local Dust   = require("dust")
 
 local Run = {}
 
@@ -23,6 +24,17 @@ local drag = nil
 
 -- Brief reject-flash overlay. nil when idle.
 local rejectFlash = nil -- { x, y, w, h, age, life }
+
+-- Cached dust counter screen position (set in drawBag, read by drawDustEvents).
+local dustCounterPos = { x = 0, y = 0 }
+-- Flash state on the dust counter: { kind = "gain"|"spend"|"reject", age, life }
+local dustFlash = nil
+-- Ejection animations: items shrinking/fading in place after overflow.
+-- entries: { x, y, w, item, age, life }
+local ejectAnims = {}
+-- Active dust-number popups drifting toward the dust counter.
+-- entries: { text, color, fromX, fromY, age, life }
+local dustPopups = {}
 
 local function speedMul()
   return C.SPEED_LEVELS[S.speed + 1] or 1
@@ -84,6 +96,9 @@ local function drawPopups(entity, anchorX, anchorY)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Forward-declared so Run.update can call it before its definition below.
+local processDustEvents = function() end
+
 function Run.enter()
   enemyHitboxes = {}
   bagHitboxes = {}
@@ -105,6 +120,29 @@ function Run.update(dt)
   if rejectFlash then
     rejectFlash.age = rejectFlash.age + dt
     if rejectFlash.age >= rejectFlash.life then rejectFlash = nil end
+  end
+  if dustFlash then
+    dustFlash.age = dustFlash.age + dt
+    if dustFlash.age >= dustFlash.life then dustFlash = nil end
+  end
+  processDustEvents()
+  do
+    local i = 1
+    while i <= #ejectAnims do
+      local a = ejectAnims[i]
+      a.age = a.age + dt
+      if a.age >= a.life then table.remove(ejectAnims, i)
+      else i = i + 1 end
+    end
+  end
+  do
+    local i = 1
+    while i <= #dustPopups do
+      local p = dustPopups[i]
+      p.age = p.age + dt
+      if p.age >= p.life then table.remove(dustPopups, i)
+      else i = i + 1 end
+    end
   end
 
   if S.run.roomState == "dead" then
@@ -244,6 +282,41 @@ local function drawBag(run, halfW, yStart)
   love.graphics.setFont(font)
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.print("BAG  (drag to equip / merge,  RMB = lock)", x0, y0 - 22)
+  -- Dust counter, right-aligned within the bag's row width.
+  local dustNum = tostring(run.dust or 0)
+  local emojiSize = 18
+  local numW = font:getWidth(dustNum)
+  local glyphW = emojiSize
+  local pad = 4
+  local totalW = glyphW + pad + numW
+  local dustX = x0 + rowW - totalW
+  local dustY = y0 - 22
+  local centerX = dustX + totalW / 2
+  local centerY = dustY + font:getHeight() / 2
+  local flashColor = {0.95, 0.95, 0.6, 1}
+  local scale = 1.0
+  if dustFlash then
+    local a = math.max(0, 1 - dustFlash.age / dustFlash.life)
+    scale = 1.0 + 0.25 * a
+    if dustFlash.kind == "gain" then
+      flashColor = {0.55 + 0.4 * a, 0.95, 0.55 + 0.4 * a, 1}
+    elseif dustFlash.kind == "spend" then
+      flashColor = {0.95, 0.95, 0.95, 1}
+    elseif dustFlash.kind == "reject" then
+      flashColor = {0.95, 0.4 + 0.5 * a, 0.4 + 0.5 * a, 1}
+    end
+  end
+  UI.drawEmoji("\u{1F4A8}", centerX - numW / 2 - pad / 2 - glyphW / 2 + (1 - scale) * 6,
+               centerY, math.floor(emojiSize * scale), flashColor)
+  love.graphics.setFont(font)
+  love.graphics.setColor(flashColor)
+  love.graphics.print(dustNum,
+    centerX + (totalW / 2 - numW) - (scale - 1) * numW / 2,
+    dustY - (scale - 1) * font:getHeight() / 2,
+    0, scale, scale)
+  love.graphics.setColor(1, 1, 1, 1)
+  dustCounterPos.x = centerX
+  dustCounterPos.y = centerY
   for r = 1, C.BAG_ROWS do
     for c = 1, C.BAG_COLS do
       local idx = (r - 1) * C.BAG_COLS + c
@@ -689,8 +762,9 @@ function Run.draw()
 
   drawHero(run, halfW)
   local equipBottom = drawEquip(run, halfW, 150)
-  local bagBottom = drawBag(run, halfW, equipBottom + 6)
-  drawBench(run, halfW, bagBottom + 6)
+  drawBag(run, halfW, equipBottom + 6)
+  -- Bench is hidden from UI for now (state + helpers preserved for later).
+  benchHitboxes = {}
 
   drawTopBar(run, splitX, W)
   drawEnemies(run, splitX, W, H)
@@ -724,9 +798,26 @@ function Run.draw()
         if not hb.item then outline(hb, {0.50, 0.75, 0.95, 1}) end
       end
     end
+    local font = resource:getFont("ui")
+    love.graphics.setFont(font)
     for _, hb in ipairs(bagHitboxes) do
       if hb.item and Loot.canMerge(item, hb.item) then
         outline(hb, {0.85, 0.50, 1.0, 1})
+        local cost = Dust.mergeCost(hb.item.rarity + 1)
+        local have = S.run.dust or 0
+        local label, color
+        if have >= cost then
+          label = ("%d dust"):format(cost)
+          color = {0.55, 0.95, 0.55, 1}
+        else
+          label = ("%d dust (have %d)"):format(cost, have)
+          color = {1.0, 0.45, 0.45, 1}
+        end
+        local lw = font:getWidth(label)
+        love.graphics.setColor(0.06, 0.07, 0.10, 0.92)
+        love.graphics.rectangle("fill", hb.x + hb.w / 2 - lw / 2 - 4, hb.y + hb.w + 4, lw + 8, font:getHeight() + 4, 3, 3)
+        love.graphics.setColor(color)
+        love.graphics.print(label, hb.x + hb.w / 2 - lw / 2, hb.y + hb.w + 6)
       end
     end
     love.graphics.setColor(1, 1, 1, 1)
@@ -736,6 +827,37 @@ function Run.draw()
     local a = math.max(0, 1 - rejectFlash.age / rejectFlash.life)
     love.graphics.setColor(0.95, 0.30, 0.30, a * 0.7)
     love.graphics.rectangle("fill", rejectFlash.x, rejectFlash.y, rejectFlash.w, rejectFlash.h, 4, 4)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  -- Ejection shrink/fade animations (item turning to dust in-slot).
+  for _, a in ipairs(ejectAnims) do
+    local t = a.age / a.life
+    local alpha = 1 - t
+    local s = 1 - 0.6 * t
+    local cx, cy = a.x + a.w / 2, a.y + a.w / 2
+    local cell = a.w * s
+    love.graphics.setColor(0.08, 0.09, 0.12, alpha * 0.75)
+    love.graphics.rectangle("fill", cx - cell / 2, cy - cell / 2, cell, cell, 4, 4)
+    love.graphics.setColor(1, 1, 1, alpha)
+    drawItemInCell(a.item, cx - cell / 2, cy - cell / 2, cell, 0.55)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  -- "+N dust" popups drifting toward the dust counter.
+  do
+    local font = resource:getFont("ui_lg")
+    love.graphics.setFont(font)
+    for _, p in ipairs(dustPopups) do
+      local t = math.min(1, p.age / p.life)
+      local ease = t * t * (3 - 2 * t)
+      local x = p.fromX + (dustCounterPos.x - p.fromX) * ease
+      local y = p.fromY + (dustCounterPos.y - p.fromY) * ease
+      local a = 1 - t
+      love.graphics.setColor(p.color[1], p.color[2], p.color[3], a)
+      local w = font:getWidth(p.text)
+      love.graphics.print(p.text, x - w / 2, y - font:getHeight() / 2)
+    end
     love.graphics.setColor(1, 1, 1, 1)
   end
 
@@ -797,9 +919,81 @@ local function snapBackToSource()
   Sounds.play("click")
 end
 
-local function destroyPrevEquip(prev)
+local function flashDust(kind)
+  dustFlash = { kind = kind, age = 0, life = 0.4 }
+end
+
+local function spawnDustPopup(text, color, fromX, fromY)
+  table.insert(dustPopups, {
+    text = text, color = color, fromX = fromX, fromY = fromY,
+    age = 0, life = 0.9,
+  })
+end
+
+local function findBagRect(corner)
+  if #bagHitboxes == 0 then return nil end
+  if corner == "right" then
+    -- Rightmost-occupied (or rightmost slot if none occupied).
+    local rect
+    for _, hb in ipairs(bagHitboxes) do
+      if hb.item then rect = hb end
+    end
+    return rect or bagHitboxes[#bagHitboxes]
+  end
+  return bagHitboxes[1]
+end
+
+local function spawnEjectAnim(rect, item)
+  if not rect or not item then return end
+  table.insert(ejectAnims, {
+    x = rect.x, y = rect.y, w = rect.w,
+    item = item, age = 0, life = 0.28,
+  })
+end
+
+processDustEvents = function()
+  while #S.pendingDustEvents > 0 do
+    local e = table.remove(S.pendingDustEvents, 1)
+    flashDust(e.kind)
+    if e.kind == "gain" then
+      Sounds.play("dust")
+      local rect
+      if e.origin == "bagRight" then rect = findBagRect("right")
+      elseif e.origin == "bagLeft" then rect = findBagRect("left")
+      elseif type(e.origin) == "string" and e.origin:sub(1, 6) == "equip:" then
+        local slot = e.origin:sub(7)
+        for _, hb in ipairs(equipHitboxes) do
+          if hb.slot == slot then rect = hb; break end
+        end
+      end
+      if rect then
+        spawnEjectAnim(rect, e.item)
+        spawnDustPopup(("+%d dust"):format(e.amount),
+                       {0.85, 0.95, 0.55, 1},
+                       rect.x + rect.w / 2, rect.y + rect.w / 2)
+      end
+    end
+  end
+end
+
+local function destroyPrevEquip(prev, slot)
   if not prev then return end
-  S.pushLog(("destroyed %s"):format(Loot.label(prev)))
+  local amount = Dust.gainFor(prev.rarity)
+  S.addDust(amount)
+  S.queueDustEvent("gain", amount, prev, "equip:" .. slot)
+  S.pushLog(("destroyed %s → %d dust"):format(Loot.label(prev), amount))
+end
+
+local function tryMerge(a, b)
+  if not Loot.canMerge(a, b) then return nil, "incompatible" end
+  local targetRarity = a.rarity + 1
+  local cost = Dust.mergeCost(targetRarity)
+  if (S.run.dust or 0) < cost then return nil, "dust", cost end
+  local result = Loot.merge(a, b)
+  if not result then return nil, "incompatible" end
+  S.addDust(-cost)
+  flashDust("spend")
+  return result, nil, cost
 end
 
 function Run.mousemoved(x, y)
@@ -894,20 +1088,13 @@ local function mousereleasedImpl(x, y, b)
     return
   end
 
-  -- Equip target (slot must match item.slot)
+  -- Equip target (slot must match item.slot). Always a plain equip-swap:
+  -- previous equipped item is destroyed for dust, no merge.
   if equipHit and equipHit.slot == item.slot then
-    if src.kind == "bag" then
+    if src.kind == "bag" or src.kind == "bench" then
       local prev = S.run.equip[item.slot]
       S.run.equip[item.slot] = item
-      destroyPrevEquip(prev)
-      S.pushLog(("equipped %s"):format(Loot.label(item)))
-      Sounds.play("equip")
-      drag = nil
-      return
-    elseif src.kind == "bench" then
-      local prev = S.run.equip[item.slot]
-      S.run.equip[item.slot] = item
-      destroyPrevEquip(prev)
+      destroyPrevEquip(prev, item.slot)
       S.pushLog(("equipped %s"):format(Loot.label(item)))
       Sounds.play("equip")
       drag = nil
@@ -917,7 +1104,7 @@ local function mousereleasedImpl(x, y, b)
       if not result then snapBackToSource(); drag = nil; return end
       local prev = S.run.equip[result.slot]
       S.run.equip[result.slot] = result
-      destroyPrevEquip(prev)
+      destroyPrevEquip(prev, result.slot)
       S.pushLog(("merged + equipped %s"):format(Loot.label(result)))
       Sounds.play("equip")
       drag = nil
@@ -939,13 +1126,18 @@ local function mousereleasedImpl(x, y, b)
 
   -- Bag occupied target with bag source: merge attempt (drag-on-drop).
   if bagHit and bagHit.item and src.kind == "bag" and Loot.canMerge(item, bagHit.item) then
-    local result = Loot.merge(item, bagHit.item)
+    local result, err, cost = tryMerge(item, bagHit.item)
     if result then
       S.run.bag[bagHit.idx] = result
-      S.pushLog(("merged: %s"):format(Loot.label(result)))
+      S.pushLog(("merged: %s (-%d dust)"):format(Loot.label(result), cost))
       Sounds.play("loot")
       drag = nil
       return
+    elseif err == "dust" then
+      flashDust("reject")
+      Sounds.play("reject")
+      S.pushLog(("merge needs %d dust"):format(cost))
+      snapBackToSource(); drag = nil; return
     end
   end
 

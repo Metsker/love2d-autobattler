@@ -7,8 +7,6 @@ love.filesystem.setRequirePath(
 local isWeb = love.system.getOS() == "Web"
 local mcp = not isWeb and require("love_mcp") or nil
 
-require("se3")
-
 local Game
 
 function love.load()
@@ -27,9 +25,6 @@ function love.load()
 
   love.math.setRandomSeed(os.time())
 
-  resource = SLoader.new()
-  resource:loadAll()
-
   _G._fonts = {
     ui    = love.graphics.newFont(16),
     ui_lg = love.graphics.newFont(28),
@@ -37,11 +32,9 @@ function love.load()
     emoji = love.graphics.newFont("assets/fonts/NotoEmoji-Regular.ttf", 32),
   }
 
-  -- Patch resource so scenes that ask resource:getFont("ui") work too.
-  local origGetFont = resource.getFont
-  function resource:getFont(name)
-    return _G._fonts[name] or (origGetFont and origGetFont(self, name))
-  end
+  resource = {
+    getFont = function(_, name) return _G._fonts[name] end,
+  }
 
   local Sounds = require("sounds")
   Sounds.init()

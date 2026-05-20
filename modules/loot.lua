@@ -104,10 +104,11 @@ local function rawBaseByName(name)
   return nil
 end
 
-function Loot.roll(room, isBoss)
+function Loot.roll(room, isBoss, opts)
   local base = C.ITEM_BASES[love.math.random(#C.ITEM_BASES)]
+  local excludeLegendary = opts and opts.excludeLegendary
   local rIdx
-  if isBoss and love.math.random() < 0.5 then
+  if isBoss and not excludeLegendary and love.math.random() < 0.5 then
     rIdx = #C.RARITY
   else
     rIdx = pickRarity(#C.RARITY - 1)

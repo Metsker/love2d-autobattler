@@ -2,6 +2,7 @@ local C      = require("constants")
 local S      = require("state")
 local Loot   = require("loot")
 local Sounds = require("sounds")
+local Dust   = require("dust")
 
 local Combat = {}
 
@@ -41,7 +42,8 @@ local function attack(attacker, defender, isHeroAttacker)
   defender.hp = math.max(0, defender.hp - taken)
   defender.hitFlash = 0.18
 
-  local shown = isHeroAttacker and taken or taken * C.ENEMY_DAMAGE_DISPLAY_MULT
+  local mult = C.STAT_DISPLAY_MULT
+  local shown = taken * mult
   if crit then
     pushPopup(defender, ("%d!"):format(shown), {1, 0.85, 0.2, 1}, 1.35)
     Sounds.play("crit")
@@ -61,7 +63,7 @@ local function attack(attacker, defender, isHeroAttacker)
     attacker.hp = math.min(attacker.hpMax, attacker.hp + heal)
     local gained = attacker.hp - before
     if gained > 0 then
-      pushPopup(attacker, ("+%d"):format(gained), {0.4, 1, 0.4, 1}, 0.85)
+      pushPopup(attacker, ("+%d"):format(gained * mult), {0.4, 1, 0.4, 1}, 0.85)
     end
   end
 
@@ -69,7 +71,7 @@ local function attack(attacker, defender, isHeroAttacker)
     local reflect = math.max(1, math.floor(taken * defender.thorns))
     attacker.hp = math.max(0, attacker.hp - reflect)
     attacker.hitFlash = 0.18
-    pushPopup(attacker, ("-%d \u{2698}"):format(reflect), {0.8, 0.5, 1, 1}, 0.85)
+    pushPopup(attacker, ("-%d \u{2698}"):format(reflect * mult), {0.8, 0.5, 1, 1}, 0.85)
   end
 
   return taken, crit, false
@@ -78,11 +80,27 @@ end
 local function dropLoot(floor, isBoss)
   local n = love.math.random(1, 3)
   Sounds.play("loot")
+  local legendaryDropped = false
   for i = 1, n do
-    local item = Loot.roll(floor, isBoss)
-    local ok = S.bagInsertHead(item)
+    local item = Loot.roll(floor, isBoss, { excludeLegendary = legendaryDropped })
+    if item.rarity == #C.RARITY then legendaryDropped = true end
+    local ok, ejected = S.bagInsertLeft(item)
     if ok then
-      S.pushLog(("loot: %s"):format(Loot.label(item)))
+      if ejected == item then
+        -- All-locked rejection: the new item turned to dust at the entry point.
+        local amount = Dust.gainFor(item.rarity)
+        S.addDust(amount)
+        S.queueDustEvent("gain", amount, item, "bagLeft")
+        S.pushLog(("bag fully locked, %s → %d dust"):format(Loot.label(item), amount))
+      else
+        S.pushLog(("loot: %s"):format(Loot.label(item)))
+        if ejected then
+          local amount = Dust.gainFor(ejected.rarity)
+          S.addDust(amount)
+          S.queueDustEvent("gain", amount, ejected, "bagRight")
+          S.pushLog(("%s → %d dust"):format(Loot.label(ejected), amount))
+        end
+      end
     else
       S.pushLog(("discarded: %s (bag full)"):format(Loot.label(item)))
     end
@@ -154,6 +172,7 @@ function Combat.tick(dt)
     run.roomState = "dead"
   elseif not anyAlive then
     run.roomState = "cleared"
+    Combat.advanceRoom()
   end
 end
 
@@ -195,10 +214,16 @@ function Combat.advanceRoom()
   local run = S.run
   if not run then return end
   local hero = run.hero
+  local before = hero.hp
   if C.BOSS_ROOMS[run.room] then
     hero.hp = hero.hpMax
   elseif (hero.regen or 0) > 0 then
     hero.hp = math.min(hero.hpMax, hero.hp + hero.regen)
+  end
+  local gained = hero.hp - before
+  if gained > 0 then
+    pushPopup(hero, ("+%d"):format(gained * C.STAT_DISPLAY_MULT), {0.4, 1, 0.4, 1}, 1.0)
+    Sounds.play("heal")
   end
   run.room = run.room + 1
   if run.room > C.MAX_ROOM then
