@@ -1,0 +1,99 @@
+name: Deploy web build to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch 2dengine love.js
+        run: git clone --depth 1 https://github.com/2dengine/love.js.git /tmp/lovejs
+
+      - name: Stamp version.lua
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          N=$(git rev-list --count HEAD)
+          printf 'return { n = %s, sha = "%s" }\n' "$N" "$SHA" > version.lua
+          cat version.lua
+
+      - name: Build .love archive
+        run: |
+          zip -r autobattler.love . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x ".claude/*" \
+            -x "libs/love_mcp.lua" \
+            -x "libs/love_mcp/*" \
+            -x "*.md" \
+            -x ".gitignore" \
+            -x "web_build/*" \
+            -x "dist/*"
+
+      - name: Assemble web build
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          mkdir -p web_build/11.5 web_build/lua
+          cp /tmp/lovejs/player.js web_build/
+          cp /tmp/lovejs/style.css web_build/
+          cp /tmp/lovejs/11.5/love.js web_build/11.5/
+          cp /tmp/lovejs/11.5/love.wasm web_build/11.5/
+          cp /tmp/lovejs/lua/*.lua web_build/lua/
+          mv autobattler.love web_build/
+          # GitHub Pages cannot set COOP/COEP headers; the service worker patches them
+          # so SharedArrayBuffer is available for the 2dengine player.
+          curl -sL https://raw.githubusercontent.com/gzuidhof/coi-serviceworker/master/coi-serviceworker.js \
+            -o web_build/coi-serviceworker.js
+          cat > web_build/index.html <<HTML
+          <!doctype html>
+          <html lang="en-us">
+            <head>
+              <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+              <title>Autobattler</title>
+              <link rel="stylesheet" href="style.css">
+            </head>
+            <body>
+              <canvas id="canvas"></canvas>
+              <div id="spinner" class="pending"></div>
+              <script src="coi-serviceworker.js"></script>
+              <script>
+                // coi-serviceworker registers a SW that adds COOP/COEP and reloads the page
+                // once on first visit. Only run the player after isolation is confirmed,
+                // otherwise the partially-loaded love.js races the reload.
+                if (window.crossOriginIsolated) {
+                  var s = document.createElement('script');
+                  s.src = 'player.js?g=autobattler.love%3Fv%3D${SHA}&v=11.5';
+                  document.body.appendChild(s);
+                }
+              </script>
+            </body>
+          </html>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./web_build
+
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

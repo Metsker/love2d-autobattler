@@ -724,6 +724,11 @@ function Run.draw()
         if not hb.item then outline(hb, {0.50, 0.75, 0.95, 1}) end
       end
     end
+    for _, hb in ipairs(bagHitboxes) do
+      if hb.item and Loot.canMerge(item, hb.item) then
+        outline(hb, {0.85, 0.50, 1.0, 1})
+      end
+    end
     love.graphics.setColor(1, 1, 1, 1)
   end
 
@@ -930,6 +935,18 @@ local function mousereleasedImpl(x, y, b)
       return
     end
     snapBackToSource(); drag = nil; return
+  end
+
+  -- Bag occupied target with bag source: merge attempt (drag-on-drop).
+  if bagHit and bagHit.item and src.kind == "bag" and Loot.canMerge(item, bagHit.item) then
+    local result = Loot.merge(item, bagHit.item)
+    if result then
+      S.run.bag[bagHit.idx] = result
+      S.pushLog(("merged: %s"):format(Loot.label(result)))
+      Sounds.play("loot")
+      drag = nil
+      return
+    end
   end
 
   -- Bag empty target. Bag-source forbidden (no bag-rearrange).
