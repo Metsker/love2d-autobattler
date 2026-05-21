@@ -10,11 +10,12 @@ local mcp = not isWeb and require("love_mcp") or nil
 local Game
 
 -- Virtual coordinate system. Everything the game draws assumes a 1920×1080
--- frame; the actual window can be any size or aspect ratio. The frame is
--- rendered to gameCanvas, then blitted scaled-and-letterboxed onto the window.
+-- frame; the actual window can be any size or aspect ratio. We render
+-- directly to the screen using a translate+scale transform — no intermediate
+-- canvas, so text and lines hit the framebuffer at native device resolution
+-- instead of being upscaled from a 1080p texture (matters on high-DPI phones).
 -- All input is mapped back into virtual coords with windowToGame.
 local VIRT_W, VIRT_H = 1920, 1080
-local gameCanvas
 local viewport = { scale = 1, ox = 0, oy = 0 }
 
 -- Fullscreen-toggle widget lives in WINDOW coords (outside the letterbox) so
@@ -88,7 +89,6 @@ function love.load()
   local Sounds = require("sounds")
   Sounds.init()
 
-  gameCanvas = love.graphics.newCanvas(VIRT_W, VIRT_H)
   recomputeViewport()
 
   Game = require("game")
@@ -154,22 +154,10 @@ local function drawFullscreenButton()
 end
 
 function love.draw()
-  if not gameCanvas then
-    if Game then Game.draw() end
-    return
-  end
-  -- Save whatever canvas was active before so we restore correctly. The
-  -- love2d-mcp screenshot tool wraps love.draw with its own setCanvas; if we
-  -- naively setCanvas() back to the screen, its screenshot canvas misses our
-  -- output and the captured image comes out blank.
-  local prevCanvas = love.graphics.getCanvas()
-  love.graphics.setCanvas(gameCanvas)
-  -- Reset any transform the caller had pushed (the love2d-mcp screenshot
-  -- handler scales the world by `scale` before calling love.draw; we want
-  -- our 1920×1080 canvas to be drawn 1:1 regardless).
-  love.graphics.push("all")
-  love.graphics.origin()
   love.graphics.clear(0, 0, 0, 1)
+  love.graphics.push()
+  love.graphics.translate(viewport.ox, viewport.oy)
+  love.graphics.scale(viewport.scale, viewport.scale)
   if Game then Game.draw() end
   if _G._versionLabel and _G._fonts and _G._fonts.ui then
     local font = _G._fonts.ui
@@ -180,10 +168,6 @@ function love.draw()
     love.graphics.setColor(1, 1, 1, 1)
   end
   love.graphics.pop()
-  love.graphics.setCanvas(prevCanvas)
-
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(gameCanvas, viewport.ox, viewport.oy, 0, viewport.scale, viewport.scale)
 
   drawFullscreenButton()
 end
