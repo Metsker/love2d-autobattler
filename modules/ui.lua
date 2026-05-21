@@ -1,7 +1,12 @@
 local UI = {}
 
+-- Virtual frame size. Every scene lays out against this; main.lua renders
+-- the scene to a 1920×1080 canvas and scales it into the actual window.
+UI.VIRT_W = 1920
+UI.VIRT_H = 1080
+
 function UI.dims()
-  return love.graphics.getWidth(), love.graphics.getHeight()
+  return UI.VIRT_W, UI.VIRT_H
 end
 
 -- Single shared emoji font loaded at a high base size. Drawing at a smaller

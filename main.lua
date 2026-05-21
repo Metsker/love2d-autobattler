@@ -9,6 +9,43 @@ local mcp = not isWeb and require("love_mcp") or nil
 
 local Game
 
+-- Virtual coordinate system. Everything the game draws assumes a 1920×1080
+-- frame; the actual window can be any size or aspect ratio. The frame is
+-- rendered to gameCanvas, then blitted scaled-and-letterboxed onto the window.
+-- All input is mapped back into virtual coords with windowToGame.
+local VIRT_W, VIRT_H = 1920, 1080
+local gameCanvas
+local viewport = { scale = 1, ox = 0, oy = 0 }
+
+-- Fullscreen-toggle widget lives in WINDOW coords (outside the letterbox) so
+-- it stays reachable on phones regardless of the canvas aspect ratio.
+local FS_SIZE = 36
+local fsRect = { x = 0, y = 0, w = FS_SIZE, h = FS_SIZE }
+
+local function recomputeViewport()
+  local sw, sh = love.graphics.getDimensions()
+  viewport.scale = math.min(sw / VIRT_W, sh / VIRT_H)
+  viewport.ox = math.floor((sw - VIRT_W * viewport.scale) * 0.5)
+  viewport.oy = math.floor((sh - VIRT_H * viewport.scale) * 0.5)
+  fsRect.x = sw - FS_SIZE - 8
+  fsRect.y = 8
+end
+
+local function windowToGame(wx, wy)
+  return (wx - viewport.ox) / viewport.scale,
+         (wy - viewport.oy) / viewport.scale
+end
+
+local function pointInRect(x, y, r)
+  return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+end
+
+local function toggleFullscreen()
+  local was = love.window.getFullscreen()
+  love.window.setFullscreen(not was, "desktop")
+  recomputeViewport()
+end
+
 function love.load()
   if not isWeb then
     local ok, socket = pcall(require, "socket")
@@ -47,6 +84,9 @@ function love.load()
   local Sounds = require("sounds")
   Sounds.init()
 
+  gameCanvas = love.graphics.newCanvas(VIRT_W, VIRT_H)
+  recomputeViewport()
+
   Game = require("game")
   Game.start()
 end
@@ -60,9 +100,13 @@ end
 -- - release synthesizes mousereleased(x,y,1) unless already promoted.
 -- _G._touchHold is published while a press is pending promotion so scenes can
 -- render a long-press pulse on whatever's under the finger.
+-- _G._inputMode flips between "mouse" and "touch" so scenes can suppress
+-- hover-only affordances (tooltips) when there's no cursor on the screen.
 local TOUCH_HOLD_S = 0.4
 local TOUCH_DRAG_PX = 8
-local touch = nil -- { id, x0, y0, x, y, t, promoted }
+local touch = nil -- { id, x0, y0, x, y, t, promoted } -- coords in game space
+
+_G._inputMode = "mouse"
 
 local function touchEnded()
   touch = nil
@@ -89,48 +133,122 @@ function love.update(dt)
     end
   end
 end
+
+local function drawFullscreenButton()
+  local fs = love.window.getFullscreen()
+  love.graphics.setColor(0.15, 0.16, 0.20, 0.85)
+  love.graphics.rectangle("fill", fsRect.x, fsRect.y, fsRect.w, fsRect.h, 6, 6)
+  love.graphics.setColor(0.6, 0.6, 0.7, 1)
+  love.graphics.rectangle("line", fsRect.x, fsRect.y, fsRect.w, fsRect.h, 6, 6)
+  if _G._fonts and _G._fonts.ui then
+    love.graphics.setFont(_G._fonts.ui)
+    love.graphics.setColor(0.85, 0.85, 0.9, 1)
+    love.graphics.printf(fs and "[ ]" or "[+]", fsRect.x, fsRect.y + 9, fsRect.w, "center")
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
 function love.draw()
+  if not gameCanvas then
+    if Game then Game.draw() end
+    return
+  end
+  -- Save whatever canvas was active before so we restore correctly. The
+  -- love2d-mcp screenshot tool wraps love.draw with its own setCanvas; if we
+  -- naively setCanvas() back to the screen, its screenshot canvas misses our
+  -- output and the captured image comes out blank.
+  local prevCanvas = love.graphics.getCanvas()
+  love.graphics.setCanvas(gameCanvas)
+  -- Reset any transform the caller had pushed (the love2d-mcp screenshot
+  -- handler scales the world by `scale` before calling love.draw; we want
+  -- our 1920×1080 canvas to be drawn 1:1 regardless).
+  love.graphics.push("all")
+  love.graphics.origin()
+  love.graphics.clear(0, 0, 0, 1)
   if Game then Game.draw() end
   if _G._versionLabel and _G._fonts and _G._fonts.ui then
     local font = _G._fonts.ui
     love.graphics.setFont(font)
     local w = font:getWidth(_G._versionLabel)
     love.graphics.setColor(1, 1, 1, 0.55)
-    love.graphics.print(_G._versionLabel, love.graphics.getWidth() - w - 6, 2)
+    love.graphics.print(_G._versionLabel, VIRT_W - w - 6, 2)
     love.graphics.setColor(1, 1, 1, 1)
   end
+  love.graphics.pop()
+  love.graphics.setCanvas(prevCanvas)
+
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(gameCanvas, viewport.ox, viewport.oy, 0, viewport.scale, viewport.scale)
+
+  drawFullscreenButton()
 end
-function love.resize(w, h)            if Game then Game.resize(w, h) end end
-function love.mousemoved(x,y,dx,dy,t) if Game then Game.mousemoved(x,y,dx,dy,t) end end
-function love.mousepressed(x,y,b,t)   if Game then Game.mousepressed(x,y,b,t) end end
-function love.mousereleased(x,y,b,t)  if Game then Game.mousereleased(x,y,b,t) end end
-function love.wheelmoved(dx,dy)       if Game then Game.wheelmoved(dx,dy) end end
-function love.keypressed(k,s,r)       if Game then Game.keypressed(k,s,r) end end
-function love.keyreleased(k)          if Game then Game.keyreleased(k) end end
+
+function love.resize()
+  recomputeViewport()
+end
+
+function love.mousemoved(x, y, dx, dy, istouch)
+  -- Ignore LÖVE's auto-converted touch→mouse events; the real path is
+  -- love.touchpressed/moved/released, which feeds our synthesizer.
+  if istouch then return end
+  _G._inputMode = "mouse"
+  local gx, gy = windowToGame(x, y)
+  local gdx, gdy = dx / viewport.scale, dy / viewport.scale
+  if Game then Game.mousemoved(gx, gy, gdx, gdy, istouch) end
+end
+
+function love.mousepressed(x, y, button, istouch)
+  if istouch then return end
+  if button == 1 and pointInRect(x, y, fsRect) then
+    toggleFullscreen()
+    return
+  end
+  _G._inputMode = "mouse"
+  local gx, gy = windowToGame(x, y)
+  if Game then Game.mousepressed(gx, gy, button, istouch) end
+end
+
+function love.mousereleased(x, y, button, istouch)
+  if istouch then return end
+  local gx, gy = windowToGame(x, y)
+  if Game then Game.mousereleased(gx, gy, button, istouch) end
+end
+
+function love.wheelmoved(dx, dy) if Game then Game.wheelmoved(dx, dy) end end
+function love.keypressed(k, s, r) if Game then Game.keypressed(k, s, r) end end
+function love.keyreleased(k)      if Game then Game.keyreleased(k) end end
 
 function love.touchpressed(id, x, y)
+  if pointInRect(x, y, fsRect) then
+    toggleFullscreen()
+    return
+  end
   if touch then return end
-  touch = { id = id, x0 = x, y0 = y, x = x, y = y, t = 0, promoted = false }
-  _G._touchHold = { x = x, y = y, frac = 0 }
+  _G._inputMode = "touch"
+  local gx, gy = windowToGame(x, y)
+  touch = { id = id, x0 = gx, y0 = gy, x = gx, y = gy, t = 0, promoted = false }
+  _G._touchHold = { x = gx, y = gy, frac = 0 }
   if Game then
     -- Prime the scene's pointer position so a stationary first touch still
     -- has the right coords for the lifted-item render.
-    Game.mousemoved(x, y, 0, 0)
-    Game.mousepressed(x, y, 1)
+    Game.mousemoved(gx, gy, 0, 0)
+    Game.mousepressed(gx, gy, 1)
   end
 end
 
 function love.touchmoved(id, x, y)
   if not touch or touch.id ~= id then return end
-  touch.x, touch.y = x, y
-  if not touch.promoted and Game then Game.mousemoved(x, y, 0, 0) end
+  local gx, gy = windowToGame(x, y)
+  touch.x, touch.y = gx, gy
+  if not touch.promoted and Game then Game.mousemoved(gx, gy, 0, 0) end
 end
 
 function love.touchreleased(id, x, y)
   if not touch or touch.id ~= id then return end
+  local gx, gy = windowToGame(x, y)
   local promoted = touch.promoted
   touchEnded()
-  if not promoted and Game then Game.mousereleased(x, y, 1) end
+  if not promoted and Game then Game.mousereleased(gx, gy, 1) end
 end
 
-function love.quit()                  if Game then Game.shutdown() end end
+function love.quit() if Game then Game.shutdown() end end

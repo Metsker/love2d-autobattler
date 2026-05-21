@@ -918,7 +918,7 @@ function Run.draw()
       love.graphics.rectangle("fill", gx, gy, cell, cell, 4, 4)
       drawItemInCell(item, gx, gy, cell, 0.6)
     end
-  else
+  elseif _G._inputMode ~= "touch" then
     local item, fromBag, isResult, hoverHb = hoveredItem()
     if item then
       for _, hb in ipairs(bagHitboxes) do
