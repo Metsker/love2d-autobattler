@@ -7,8 +7,9 @@ end
 -- Single shared emoji font loaded at a high base size. Drawing at a smaller
 -- target size scales the print call instead of loading a new font, which is
 -- both faster and avoids repeated reads from the .love archive — the latter
--- can fail in love.js even when the file is present.
-local EMOJI_BASE_SIZE = 64
+-- can fail in love.js even when the file is present. Size 109 matches the
+-- value that the sibling FarmBots project ships in production.
+local EMOJI_BASE_SIZE = 109
 local emojiFont
 
 local function getEmojiFont()

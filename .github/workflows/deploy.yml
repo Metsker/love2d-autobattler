@@ -45,6 +45,7 @@ jobs:
             -x "libs/love_mcp/*" \
             -x "*.md" \
             -x ".gitignore" \
+            -x "web_assets/*" \
             -x "web_build/*" \
             -x "dist/*"
 
@@ -60,8 +61,9 @@ jobs:
           mv autobattler.love web_build/
           # GitHub Pages cannot set COOP/COEP headers; the service worker patches them
           # so SharedArrayBuffer is available for the 2dengine player.
-          curl -sL https://raw.githubusercontent.com/gzuidhof/coi-serviceworker/master/coi-serviceworker.js \
-            -o web_build/coi-serviceworker.js
+          # We ship a vendored copy (web_assets/coi-serviceworker.js) patched to
+          # force revalidation on navigation, so soft-refresh picks up new builds.
+          cp web_assets/coi-serviceworker.js web_build/
           cat > web_build/index.html <<HTML
           <!doctype html>
           <html lang="en-us">
