@@ -111,7 +111,7 @@ end
 --   TOUCH_HOLD_S:  toggle lock on the slot (synthesized button 2)
 -- Movement past TOUCH_DRAG_PX cancels both and commits to a drag.
 local TOUCH_HOVER_S = 0.2
-local TOUCH_HOLD_S = 0.7
+local TOUCH_HOLD_S = 1.5
 local TOUCH_DRAG_PX = 8
 local touch = nil -- { id, x0, y0, x, y, t, promoted } -- coords in game space
 

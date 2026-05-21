@@ -108,6 +108,16 @@ function Run.enter()
   enemyHitboxes = {}
   bagHitboxes = {}
   equipHitboxes = {}
+  -- Drag/touch state is module-local; if the previous run ended (death or
+  -- win) while a drag was in flight, the leftover would otherwise drop into
+  -- the next run's bag on the first mouse release.
+  drag = nil
+  _G._touchHold = nil
+end
+
+function Run.exit()
+  drag = nil
+  _G._touchHold = nil
 end
 
 function Run.update(dt)
