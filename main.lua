@@ -19,6 +19,10 @@ local viewport = { scale = 1, ox = 0, oy = 0 }
 
 -- Fullscreen-toggle widget lives in WINDOW coords (outside the letterbox) so
 -- it stays reachable on phones regardless of the canvas aspect ratio.
+-- On Web (love.js), love.window.setFullscreen is a no-op; the deploy template
+-- ships an HTML overlay button at the same screen position that calls
+-- document.requestFullscreen() instead. We hide the Lua-drawn button on Web so
+-- the HTML overlay is the only thing the user sees and taps.
 local FS_SIZE = 36
 local fsRect = { x = 0, y = 0, w = FS_SIZE, h = FS_SIZE }
 
@@ -28,7 +32,7 @@ local function recomputeViewport()
   viewport.ox = math.floor((sw - VIRT_W * viewport.scale) * 0.5)
   viewport.oy = math.floor((sh - VIRT_H * viewport.scale) * 0.5)
   fsRect.x = sw - FS_SIZE - 8
-  fsRect.y = 8
+  fsRect.y = sh - FS_SIZE - 8
 end
 
 local function windowToGame(wx, wy)
@@ -135,6 +139,7 @@ function love.update(dt)
 end
 
 local function drawFullscreenButton()
+  if isWeb then return end -- HTML overlay handles it on Web (see deploy.yml)
   local fs = love.window.getFullscreen()
   love.graphics.setColor(0.15, 0.16, 0.20, 0.85)
   love.graphics.rectangle("fill", fsRect.x, fsRect.y, fsRect.w, fsRect.h, 6, 6)
@@ -199,7 +204,7 @@ end
 
 function love.mousepressed(x, y, button, istouch)
   if istouch then return end
-  if button == 1 and pointInRect(x, y, fsRect) then
+  if not isWeb and button == 1 and pointInRect(x, y, fsRect) then
     toggleFullscreen()
     return
   end
@@ -219,7 +224,7 @@ function love.keypressed(k, s, r) if Game then Game.keypressed(k, s, r) end end
 function love.keyreleased(k)      if Game then Game.keyreleased(k) end end
 
 function love.touchpressed(id, x, y)
-  if pointInRect(x, y, fsRect) then
+  if not isWeb and pointInRect(x, y, fsRect) then
     toggleFullscreen()
     return
   end

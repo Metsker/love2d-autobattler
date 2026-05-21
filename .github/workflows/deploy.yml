@@ -72,12 +72,61 @@ jobs:
               <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
               <title>Autobattler</title>
               <link rel="stylesheet" href="style.css">
+              <style>
+                #fs-btn {
+                  position: fixed;
+                  right: 8px;
+                  bottom: 8px;
+                  width: 36px;
+                  height: 36px;
+                  background: rgba(38, 41, 51, 0.85);
+                  color: rgba(217, 217, 230, 1);
+                  border: 1px solid rgba(153, 153, 179, 1);
+                  border-radius: 6px;
+                  font-family: monospace;
+                  font-size: 14px;
+                  z-index: 1000;
+                  cursor: pointer;
+                  touch-action: manipulation;
+                  -webkit-tap-highlight-color: transparent;
+                  user-select: none;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                }
+              </style>
             </head>
             <body>
               <canvas id="canvas"></canvas>
+              <button id="fs-btn" type="button" aria-label="toggle fullscreen">[+]</button>
               <div id="spinner" class="pending"></div>
               <script src="coi-serviceworker.js"></script>
               <script>
+                // love.window.setFullscreen does nothing under love.js; entering
+                // browser fullscreen requires document.requestFullscreen() from a
+                // real user gesture, so we wire the button up directly in JS and
+                // capture the gesture before love.js's canvas handlers see it.
+                (function () {
+                  var btn = document.getElementById('fs-btn');
+                  function toggle(e) {
+                    if (e) { e.preventDefault(); e.stopPropagation(); }
+                    var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                    if (!fsEl) {
+                      var req = document.documentElement.requestFullscreen
+                             || document.documentElement.webkitRequestFullscreen;
+                      if (req) req.call(document.documentElement).catch(function () {});
+                    } else {
+                      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+                      if (exit) exit.call(document).catch(function () {});
+                    }
+                  }
+                  btn.addEventListener('click', toggle);
+                  btn.addEventListener('touchstart', toggle, { passive: false });
+                  document.addEventListener('fullscreenchange', function () {
+                    btn.textContent = document.fullscreenElement ? '[ ]' : '[+]';
+                  });
+                })();
+
                 // coi-serviceworker registers a SW that adds COOP/COEP and reloads the page
                 // once on first visit. Only run the player after isolation is confirmed,
                 // otherwise the partially-loaded love.js races the reload.
