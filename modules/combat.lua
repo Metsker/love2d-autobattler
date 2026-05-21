@@ -71,7 +71,7 @@ local function attack(attacker, defender, isHeroAttacker)
     local reflect = math.max(1, math.floor(taken * defender.thorns))
     attacker.hp = math.max(0, attacker.hp - reflect)
     attacker.hitFlash = 0.18
-    pushPopup(attacker, ("-%d \u{2698}"):format(reflect * mult), {0.8, 0.5, 1, 1}, 0.85)
+    pushPopup(attacker, ("-%d ⚘"):format(reflect * mult), {0.8, 0.5, 1, 1}, 0.85)
   end
 
   return taken, crit, false

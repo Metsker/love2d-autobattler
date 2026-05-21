@@ -6,7 +6,7 @@ function Title.draw()
   local W, H = UI.dims()
   love.graphics.clear(0.08, 0.08, 0.10, 1)
 
-  UI.drawEmoji("\u{2694}", W / 2, H * 0.28, 120, {0.95, 0.8, 0.2, 1})
+  UI.drawEmoji("⚔", W / 2, H * 0.28, 120, {0.95, 0.8, 0.2, 1})
 
   local titleFont = resource:getFont("ui_xl")
   love.graphics.setColor(1, 1, 1, 1)

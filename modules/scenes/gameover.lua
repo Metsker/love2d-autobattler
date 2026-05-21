@@ -15,7 +15,7 @@ function Gameover.draw()
   local W, H = UI.dims()
   love.graphics.clear(0.05, 0.05, 0.08, 1)
 
-  local emoji = (result == "won") and "\u{1F451}" or "\u{1F480}"
+  local emoji = (result == "won") and "👑" or "💀"
   local emojiColor = (result == "won") and {0.95, 0.85, 0.3, 1} or {0.9, 0.3, 0.3, 1}
   UI.drawEmoji(emoji, W / 2, H * 0.28, 120, emojiColor)
 

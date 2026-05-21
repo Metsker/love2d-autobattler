@@ -306,7 +306,7 @@ local function drawBag(run, halfW, yStart)
       flashColor = {0.95, 0.4 + 0.5 * a, 0.4 + 0.5 * a, 1}
     end
   end
-  UI.drawEmoji("\u{1F4A8}", centerX - numW / 2 - pad / 2 - glyphW / 2 + (1 - scale) * 6,
+  UI.drawEmoji("💨", centerX - numW / 2 - pad / 2 - glyphW / 2 + (1 - scale) * 6,
                centerY, math.floor(emojiSize * scale), flashColor)
   love.graphics.setFont(font)
   love.graphics.setColor(flashColor)
@@ -422,7 +422,7 @@ local function drawEnemies(run, splitX, W, H)
     end
     love.graphics.rectangle("line", x, y, cellW, cellH, 6, 6)
 
-    local emoji = C.ENEMY_EMOJI[e.name] or "\u{1F47E}"
+    local emoji = C.ENEMY_EMOJI[e.name] or "👾"
     local emojiColor = e.hp > 0 and {0.95, 0.5, 0.5, 1} or {0.35, 0.35, 0.35, 1}
     UI.drawEmoji(emoji, x + cellW / 2, y + 90, 80, emojiColor)
 
@@ -481,7 +481,7 @@ local function drawMuteButton(splitX, W)
   love.graphics.rectangle("fill", x, y, size, size, 4, 4)
   love.graphics.setColor(Sounds.isMuted() and {0.95, 0.3, 0.3, 1} or {0.6, 0.6, 0.7, 1})
   love.graphics.rectangle("line", x, y, size, size, 4, 4)
-  local glyph = Sounds.isMuted() and "\u{1F507}" or "\u{1F509}"
+  local glyph = Sounds.isMuted() and "🔇" or "🔉"
   UI.drawEmoji(glyph, x + size / 2, y + size / 2, 22,
     Sounds.isMuted() and {0.95, 0.4, 0.4, 1} or {0.85, 0.85, 0.9, 1})
 end
@@ -581,13 +581,13 @@ local function tooltipLines(item)
       local s = fmtStat(g.stat, g.total, g.pct)
       if s then
         if g.count and g.count > 1 then
-          s = s .. (" (\u{00D7}%d)"):format(g.count)
+          s = s .. (" (×%d)"):format(g.count)
         end
         local line = { text = s, color = {0.85, 0.85, 0.85, 1} }
         if g.tier then
           local tc = C.TIER_COLOR[g.tier] or {1, 1, 1, 1}
           line.prefix = g.overflow
-            and ("T%d\u{2605} "):format(g.tier)
+            and ("T%d★ "):format(g.tier)
             or  ("T%d "):format(g.tier)
           line.prefixColor = tc
         end

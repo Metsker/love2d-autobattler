@@ -86,43 +86,43 @@ C.TIER_COLOR = {
 }
 
 C.ITEM_BASES = {
-  { slot = "main",   name = "Sword",   atk = 6,             emoji = "\u{2694}"   },
-  { slot = "main",   name = "Mace",    atk = 7, atkSpd=-0.1, emoji = "\u{1F528}" },
-  { slot = "off",    name = "Shield",  armor = 3,           emoji = "\u{1F6E1}"  },
-  { slot = "head",   name = "Helm",    armor = 2, hpMax=10, emoji = "\u{26D1}"   },
-  { slot = "chest",  name = "Armor",   armor = 4, hpMax=20, emoji = "\u{1F9E5}"  },
-  { slot = "legs",   name = "Greaves", armor = 2, hpMax=10, emoji = "\u{1F456}"  },
-  { slot = "feet",   name = "Boots",   armor = 1, atkSpd=0.1, emoji = "\u{1F462}" },
-  { slot = "ring",   name = "Ring",    crit = 0.10,         emoji = "\u{1F48D}"  },
-  { slot = "amulet", name = "Amulet",  critDmg = 0.2,       emoji = "\u{1F4FF}"  },
+  { slot = "main",   name = "Sword",   atk = 6,             emoji = "⚔"   },
+  { slot = "main",   name = "Mace",    atk = 7, atkSpd=-0.1, emoji = "🔨" },
+  { slot = "off",    name = "Shield",  armor = 3,           emoji = "🛡"  },
+  { slot = "head",   name = "Helm",    armor = 2, hpMax=10, emoji = "⛑"   },
+  { slot = "chest",  name = "Armor",   armor = 4, hpMax=20, emoji = "🧥"  },
+  { slot = "legs",   name = "Greaves", armor = 2, hpMax=10, emoji = "👖"  },
+  { slot = "feet",   name = "Boots",   armor = 1, atkSpd=0.1, emoji = "👢" },
+  { slot = "ring",   name = "Ring",    crit = 0.10,         emoji = "💍"  },
+  { slot = "amulet", name = "Amulet",  critDmg = 0.2,       emoji = "📿"  },
 }
 
 C.SLOT_EMOJI = {
-  head   = "\u{26D1}",
-  amulet = "\u{1F4FF}",
-  chest  = "\u{1F9E5}",
-  main   = "\u{2694}",
-  off    = "\u{1F6E1}",
-  legs   = "\u{1F456}",
-  ring   = "\u{1F48D}",
-  feet   = "\u{1F462}",
+  head   = "⛑",
+  amulet = "📿",
+  chest  = "🧥",
+  main   = "⚔",
+  off    = "🛡",
+  legs   = "👖",
+  ring   = "💍",
+  feet   = "👢",
 }
 
 C.CLASS_EMOJI = {
-  warrior = "\u{2694}",
-  rogue   = "\u{1F5E1}",
-  monk    = "\u{1F94B}",
+  warrior = "⚔",
+  rogue   = "🗡",
+  monk    = "🥋",
 }
 
-C.HERO_EMOJI = "\u{1F9D1}"
+C.HERO_EMOJI = "🧑"
 
 C.ENEMY_EMOJI = {
-  Slime    = "\u{1F47E}",
-  Skeleton = "\u{1F480}",
-  Goblin   = "\u{1F479}",
-  Ogre     = "\u{1F9CC}",
-  Dragon   = "\u{1F409}",
-  Lich     = "\u{1F9D9}",
+  Slime    = "👾",
+  Skeleton = "💀",
+  Goblin   = "👹",
+  Ogre     = "🧌",
+  Dragon   = "🐉",
+  Lich     = "🧙",
 }
 
 C.SLOT_ORDER = { "head", "amulet", "chest", "main", "off", "legs", "ring", "feet" }
