@@ -6,6 +6,12 @@ local Classpick = {}
 
 local choices = { "warrior", "rogue", "monk" }
 
+local BACK_BTN = { x = 20, y = 20, w = 40, h = 40 }
+
+local function inRect(x, y, r)
+  return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+end
+
 local function layout()
   local W, H = UI.dims()
   local boxW = math.min(320, (W - 80) / 3 - 30)
@@ -26,9 +32,20 @@ local function startWith(name)
   Game.switch("run")
 end
 
+local function drawBackButton()
+  love.graphics.setColor(0.15, 0.16, 0.20, 1)
+  love.graphics.rectangle("fill", BACK_BTN.x, BACK_BTN.y, BACK_BTN.w, BACK_BTN.h, 6, 6)
+  love.graphics.setColor(0.6, 0.6, 0.7, 1)
+  love.graphics.rectangle("line", BACK_BTN.x, BACK_BTN.y, BACK_BTN.w, BACK_BTN.h, 6, 6)
+  UI.drawEmoji("⬅", BACK_BTN.x + BACK_BTN.w / 2, BACK_BTN.y + BACK_BTN.h / 2, 22,
+    {0.85, 0.85, 0.9, 1})
+end
+
 function Classpick.draw()
   local W, H, boxW, boxH, gap, startX, y0 = layout()
   love.graphics.clear(0.08, 0.08, 0.10, 1)
+
+  drawBackButton()
 
   love.graphics.setFont(resource:getFont("ui_lg"))
   love.graphics.setColor(1, 1, 1, 1)
@@ -74,7 +91,7 @@ function Classpick.draw()
   end
 
   love.graphics.setColor(0.7, 0.7, 0.7, 1)
-  love.graphics.printf("press 1/2/3  —  ESC to title", 0, y0 + boxH + 30, W, "center")
+  love.graphics.printf("tap a class  —  ESC to title", 0, y0 + boxH + 30, W, "center")
 end
 
 function Classpick.keypressed(k)
@@ -89,6 +106,11 @@ end
 
 function Classpick.mousepressed(x, y, b)
   if b ~= 1 then return end
+  if inRect(x, y, BACK_BTN) then
+    local Game = require("game")
+    Game.switch("title")
+    return
+  end
   local _, _, boxW, boxH, gap, startX, y0 = layout()
   for i, name in ipairs(choices) do
     local bx = startX + (i - 1) * (boxW + gap)

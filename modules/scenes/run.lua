@@ -14,6 +14,11 @@ local equipHitboxes = {}
 local benchHitboxes = {} -- entries: { x,y,w,h, kind = "input"|"result", slot = 1|2 (for input) }
 local arenaRect     = { x = 0, y = 0, w = 0, h = 0 }
 local muteRect      = { x = 0, y = 0, w = 0, h = 0 }
+local backRect      = { x = 0, y = 0, w = 0, h = 0 }
+local pauseRect     = { x = 0, y = 0, w = 0, h = 0 }
+local speedRect     = { x = 0, y = 0, w = 0, h = 0 }
+
+local lastSpeedIdx = 1 -- last non-zero S.speed, for pause/play restore
 
 local mouseX, mouseY = -1, -1
 
@@ -472,18 +477,48 @@ local function drawLog(splitX, W, H)
   end
 end
 
-local function drawMuteButton(splitX, W)
+local function drawSquareButton(rect, frame, fill)
+  love.graphics.setColor(fill[1], fill[2], fill[3], fill[4] or 1)
+  love.graphics.rectangle("fill", rect.x, rect.y, rect.w, rect.h, 4, 4)
+  love.graphics.setColor(frame[1], frame[2], frame[3], frame[4] or 1)
+  love.graphics.rectangle("line", rect.x, rect.y, rect.w, rect.h, 4, 4)
+end
+
+local function drawTopRightCluster(W)
   local size = 32
-  local x = W - size - 20
+  local gap = 8
   local y = 14
-  muteRect.x, muteRect.y, muteRect.w, muteRect.h = x, y, size, size
-  love.graphics.setColor(0.15, 0.16, 0.20, 1)
-  love.graphics.rectangle("fill", x, y, size, size, 4, 4)
-  love.graphics.setColor(Sounds.isMuted() and {0.95, 0.3, 0.3, 1} or {0.6, 0.6, 0.7, 1})
-  love.graphics.rectangle("line", x, y, size, size, 4, 4)
+  local rightEdge = W - 20
+  speedRect.x = rightEdge - size * 2 - gap
+  pauseRect.x = rightEdge - size * 3 - gap * 2
+  backRect.x  = rightEdge - size * 4 - gap * 3
+  muteRect.x  = rightEdge - size
+  for _, r in ipairs({ backRect, pauseRect, speedRect, muteRect }) do
+    r.y, r.w, r.h = y, size, size
+  end
+
+  drawSquareButton(backRect, {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
+  UI.drawEmoji("⬅", backRect.x + backRect.w / 2, backRect.y + backRect.h / 2, 20,
+    {0.85, 0.85, 0.9, 1})
+
+  local paused = S.speed == 0
+  drawSquareButton(pauseRect, paused and {0.95, 0.8, 0.2, 1} or {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
+  UI.drawEmoji(paused and "▶" or "⏸", pauseRect.x + pauseRect.w / 2, pauseRect.y + pauseRect.h / 2, 20,
+    paused and {0.95, 0.85, 0.3, 1} or {0.85, 0.85, 0.9, 1})
+
+  local displayIdx = (S.speed == 0) and lastSpeedIdx or S.speed
+  local displayMul = C.SPEED_LEVELS[displayIdx + 1] or 1
+  drawSquareButton(speedRect, {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
+  love.graphics.setFont(resource:getFont("ui"))
+  love.graphics.setColor(0.85, 0.85, 0.9, paused and 0.55 or 1)
+  love.graphics.printf(("%d×"):format(displayMul), speedRect.x, speedRect.y + 8, speedRect.w, "center")
+
+  drawSquareButton(muteRect, Sounds.isMuted() and {0.95, 0.3, 0.3, 1} or {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
   local glyph = Sounds.isMuted() and "🔇" or "🔉"
-  UI.drawEmoji(glyph, x + size / 2, y + size / 2, 22,
+  UI.drawEmoji(glyph, muteRect.x + muteRect.w / 2, muteRect.y + muteRect.h / 2, 22,
     Sounds.isMuted() and {0.95, 0.4, 0.4, 1} or {0.85, 0.85, 0.9, 1})
+
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 local function drawTopBar(run, splitX, W)
@@ -499,8 +534,10 @@ local function drawTopBar(run, splitX, W)
   local txt = (mul == 0) and "PAUSED" or ("speed: %d×"):format(mul)
   love.graphics.printf(txt, splitX, 90, rightW - 60, "right")
   love.graphics.printf("SPACE pause   1/2/3 = 1×/2×/4×   click enemy = lock target", splitX, 120, rightW, "center")
+  love.graphics.setColor(0.55, 0.55, 0.6, 1)
+  love.graphics.printf("(touch: long-press bag item = lock)", splitX, 140, rightW, "center")
 
-  drawMuteButton(splitX, W)
+  drawTopRightCluster(W)
 end
 
 local function drawClearedHint(run, splitX, W)
@@ -866,9 +903,21 @@ function Run.draw()
     local cell = drag.originRect.w
     local gx = mouseX - drag.offsetX
     local gy = mouseY - drag.offsetY
-    love.graphics.setColor(0.08, 0.09, 0.12, 0.75)
-    love.graphics.rectangle("fill", gx, gy, cell, cell, 4, 4)
-    drawItemInCell(item, gx, gy, cell, 0.6)
+    -- Long-press pulse: a stationary touch on a bag item grows the lifted
+    -- sprite slightly until lock fires at frac=1 (see touch synthesis in main.lua).
+    local hold = _G._touchHold
+    if hold and drag.source.kind == "bag" then
+      local scale = 1.0 + 0.05 * hold.frac
+      local cx, cy = gx + cell / 2, gy + cell / 2
+      local s = cell * scale
+      love.graphics.setColor(0.08, 0.09, 0.12, 0.75)
+      love.graphics.rectangle("fill", cx - s / 2, cy - s / 2, s, s, 4, 4)
+      drawItemInCell(item, cx - s / 2, cy - s / 2, s, 0.6)
+    else
+      love.graphics.setColor(0.08, 0.09, 0.12, 0.75)
+      love.graphics.rectangle("fill", gx, gy, cell, cell, 4, 4)
+      drawItemInCell(item, gx, gy, cell, 0.6)
+    end
   else
     local item, fromBag, isResult, hoverHb = hoveredItem()
     if item then
@@ -1000,11 +1049,38 @@ function Run.mousemoved(x, y)
   mouseX, mouseY = x, y
 end
 
+local function setSpeed(idx)
+  S.speed = idx
+  if idx ~= 0 then lastSpeedIdx = idx end
+end
+
 function Run.mousepressed(x, y, b)
   if b == 1 then
     if inRect(muteRect.x, muteRect.y, muteRect.w, muteRect.h, x, y) then
       Sounds.toggleMute()
       if not Sounds.isMuted() then Sounds.play("click") end
+      return
+    end
+    if inRect(backRect.x, backRect.y, backRect.w, backRect.h, x, y) then
+      Sounds.play("click")
+      local Game = require("game")
+      Game.switch("title")
+      return
+    end
+    if inRect(pauseRect.x, pauseRect.y, pauseRect.w, pauseRect.h, x, y) then
+      if S.speed == 0 then setSpeed(lastSpeedIdx) else setSpeed(0) end
+      Sounds.play("click")
+      return
+    end
+    if inRect(speedRect.x, speedRect.y, speedRect.w, speedRect.h, x, y) then
+      local nextIdx
+      if S.speed == 0 then
+        nextIdx = lastSpeedIdx
+      else
+        nextIdx = (S.speed % 3) + 1
+      end
+      setSpeed(nextIdx)
+      Sounds.play("click")
       return
     end
     for _, hb in ipairs(enemyHitboxes) do
@@ -1170,10 +1246,10 @@ end
 
 function Run.keypressed(k)
   if k == "space" then
-    if S.speed == 0 then S.speed = 1 else S.speed = 0 end
-  elseif k == "1" then S.speed = 1
-  elseif k == "2" then S.speed = 2
-  elseif k == "3" then S.speed = 3
+    if S.speed == 0 then setSpeed(lastSpeedIdx) else setSpeed(0) end
+  elseif k == "1" then setSpeed(1)
+  elseif k == "2" then setSpeed(2)
+  elseif k == "3" then setSpeed(3)
   elseif k == "m" then
     Sounds.toggleMute()
   elseif k == "escape" then

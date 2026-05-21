@@ -15,7 +15,7 @@ function Title.draw()
 
   love.graphics.setFont(resource:getFont("ui_lg"))
   love.graphics.setColor(0.75, 0.75, 0.75, 1)
-  love.graphics.printf("press SPACE to start", 0, H * 0.66, W, "center")
+  love.graphics.printf("tap or press SPACE to start", 0, H * 0.66, W, "center")
 end
 
 function Title.keypressed(k)
@@ -23,6 +23,12 @@ function Title.keypressed(k)
     local Game = require("game")
     Game.switch("classpick")
   end
+end
+
+function Title.mousepressed(_, _, b)
+  if b ~= 1 then return end
+  local Game = require("game")
+  Game.switch("classpick")
 end
 
 return Title
