@@ -485,9 +485,10 @@ local function drawSquareButton(rect, frame, fill)
 end
 
 local function drawTopRightCluster(W)
-  local size = 32
-  local gap = 8
+  local size = 56
+  local gap = 10
   local y = 14
+  local glyphSize = math.floor(size * 0.6)
   local rightEdge = W - 20
   speedRect.x = rightEdge - size * 2 - gap
   pauseRect.x = rightEdge - size * 3 - gap * 2
@@ -498,24 +499,26 @@ local function drawTopRightCluster(W)
   end
 
   drawSquareButton(backRect, {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
-  UI.drawEmoji("⬅", backRect.x + backRect.w / 2, backRect.y + backRect.h / 2, 20,
+  UI.drawEmoji("⬅", backRect.x + backRect.w / 2, backRect.y + backRect.h / 2, glyphSize,
     {0.85, 0.85, 0.9, 1})
 
   local paused = S.speed == 0
   drawSquareButton(pauseRect, paused and {0.95, 0.8, 0.2, 1} or {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
-  UI.drawEmoji(paused and "▶" or "⏸", pauseRect.x + pauseRect.w / 2, pauseRect.y + pauseRect.h / 2, 20,
+  UI.drawEmoji(paused and "▶" or "⏸", pauseRect.x + pauseRect.w / 2, pauseRect.y + pauseRect.h / 2, glyphSize,
     paused and {0.95, 0.85, 0.3, 1} or {0.85, 0.85, 0.9, 1})
 
   local displayIdx = (S.speed == 0) and lastSpeedIdx or S.speed
   local displayMul = C.SPEED_LEVELS[displayIdx + 1] or 1
   drawSquareButton(speedRect, {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
-  love.graphics.setFont(resource:getFont("ui"))
+  local sFont = resource:getFont("ui_lg")
+  love.graphics.setFont(sFont)
   love.graphics.setColor(0.85, 0.85, 0.9, paused and 0.55 or 1)
-  love.graphics.printf(("%d×"):format(displayMul), speedRect.x, speedRect.y + 8, speedRect.w, "center")
+  love.graphics.printf(("%d×"):format(displayMul), speedRect.x,
+    speedRect.y + (size - sFont:getHeight()) / 2, speedRect.w, "center")
 
   drawSquareButton(muteRect, Sounds.isMuted() and {0.95, 0.3, 0.3, 1} or {0.6, 0.6, 0.7, 1}, {0.15, 0.16, 0.20, 1})
   local glyph = Sounds.isMuted() and "🔇" or "🔉"
-  UI.drawEmoji(glyph, muteRect.x + muteRect.w / 2, muteRect.y + muteRect.h / 2, 22,
+  UI.drawEmoji(glyph, muteRect.x + muteRect.w / 2, muteRect.y + muteRect.h / 2, glyphSize,
     Sounds.isMuted() and {0.95, 0.4, 0.4, 1} or {0.85, 0.85, 0.9, 1})
 
   love.graphics.setColor(1, 1, 1, 1)
@@ -918,6 +921,11 @@ function Run.draw()
       love.graphics.rectangle("fill", gx, gy, cell, cell, 4, 4)
       drawItemInCell(item, gx, gy, cell, 0.6)
     end
+    -- Touch tooltip: once a stationary press passes the hover threshold,
+    -- surface the item details just like mouse hover would.
+    if hold and hold.hovering and drag.source.kind == "bag" then
+      drawTooltip(item, true, W, H, false)
+    end
   elseif _G._inputMode ~= "touch" then
     local item, fromBag, isResult, hoverHb = hoveredItem()
     if item then
@@ -959,9 +967,18 @@ end
 local function snapBackToSource()
   if not drag then return end
   if drag.source.kind == "bag" then
-    S.run.bag[drag.source.idx] = drag.item
+    -- Originating slot may have been refilled by a loot drop while the drag
+    -- was in flight; if so, push the dragged item back through the conveyor
+    -- instead of overwriting (and losing) the new item.
+    if not S.run.bag[drag.source.idx] and not S.run.locks[drag.source.idx] then
+      S.run.bag[drag.source.idx] = drag.item
+    else
+      S.bagInsertLeft(drag.item)
+    end
   elseif drag.source.kind == "bench" then
-    S.benchSet(drag.source.slot, drag.item)
+    if not S.benchSet(drag.source.slot, drag.item) then
+      S.bagInsertLeft(drag.item)
+    end
   end
   -- result source: item still in bench.result; nothing to restore
   if drag.originRect then startRejectFlash(drag.originRect) end
@@ -1152,14 +1169,20 @@ local function mousereleasedImpl(x, y, b)
   local bagHit   = findHit(bagHitboxes, x, y)
   local benchHit = findHit(benchHitboxes, x, y)
 
-  -- Cancel: drop on origin slot puts item back, no flash.
+  -- Cancel: drop on origin slot puts item back, no flash. If a loot drop
+  -- has already refilled the slot, fold the dragged item back into the
+  -- conveyor instead of stomping the new item.
   if src.kind == "bag" and bagHit and bagHit.idx == src.idx then
-    S.run.bag[src.idx] = item
+    if not S.run.bag[src.idx] then
+      S.run.bag[src.idx] = item
+    else
+      S.bagInsertLeft(item)
+    end
     drag = nil
     return
   end
   if src.kind == "bench" and benchHit and benchHit.kind == "input" and benchHit.slot == src.slot then
-    S.benchSet(src.slot, item)
+    if not S.benchSet(src.slot, item) then S.bagInsertLeft(item) end
     drag = nil
     return
   end

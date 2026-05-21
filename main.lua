@@ -106,7 +106,12 @@ end
 -- render a long-press pulse on whatever's under the finger.
 -- _G._inputMode flips between "mouse" and "touch" so scenes can suppress
 -- hover-only affordances (tooltips) when there's no cursor on the screen.
-local TOUCH_HOLD_S = 0.4
+-- Touch hold has two thresholds:
+--   TOUCH_HOVER_S: show the item tooltip (touch's equivalent of mouse hover)
+--   TOUCH_HOLD_S:  toggle lock on the slot (synthesized button 2)
+-- Movement past TOUCH_DRAG_PX cancels both and commits to a drag.
+local TOUCH_HOVER_S = 0.2
+local TOUCH_HOLD_S = 0.7
 local TOUCH_DRAG_PX = 8
 local touch = nil -- { id, x0, y0, x, y, t, promoted } -- coords in game space
 
@@ -133,7 +138,11 @@ function love.update(dt)
         Game.mousepressed(touch.x0, touch.y0, 2)
       end
     else
-      _G._touchHold = { x = touch.x0, y = touch.y0, frac = touch.t / TOUCH_HOLD_S }
+      _G._touchHold = {
+        x = touch.x0, y = touch.y0,
+        frac = touch.t / TOUCH_HOLD_S,
+        hovering = touch.t >= TOUCH_HOVER_S,
+      }
     end
   end
 end
