@@ -71,9 +71,11 @@ local function mix(layers)
   return sd
 end
 
+local M_VOLUME = 0.25
+
 local function src(sd)
   local s = love.audio.newSource(sd, "static")
-  s:setVolume(0.6)
+  s:setVolume(M_VOLUME)
   return s
 end
 

@@ -109,7 +109,15 @@ end
 
 function Combat.tick(dt)
   local run = S.run
-  if not run or run.roomState ~= "fighting" then return end
+  if not run then return end
+  if run.roomState == "cleared" then
+    run.roomPauseT = (run.roomPauseT or 0) - dt
+    if run.roomPauseT <= 0 then
+      Combat.advanceRoom()
+    end
+    return
+  end
+  if run.roomState ~= "fighting" then return end
   local hero = run.hero
   local enemies = run.enemies
 
@@ -172,7 +180,7 @@ function Combat.tick(dt)
     run.roomState = "dead"
   elseif not anyAlive then
     run.roomState = "cleared"
-    Combat.advanceRoom()
+    run.roomPauseT = C.ROOM_PAUSE
   end
 end
 
